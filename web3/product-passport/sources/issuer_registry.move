@@ -51,7 +51,7 @@ module luxpass::issuer_registry {
         assert_admin(&reg, admin_addr);
 
         table::upsert(&mut reg.issuers, issuer, true);
-        event::emit_event(&mut reg.issuer_added_events, IssuerAdded {issuer});
+        event::emit_event(&mut reg.issuer_added_events, IssuerAdded {issuer})
     }
 
     public entry fun remove_issuer(admin: &signer, issuer: address) acquires IssuerRegistry {
@@ -61,6 +61,36 @@ module luxpass::issuer_registry {
 
         // If key doesn't exist, this aborts.
         table::remove(&mut reg.issuers, issuer);
-        event::emit_event(&mut reg.issuer_removed_events, IssuerRemoved {issuer});
+        event::emit_event(&mut reg.issuer_removed_events, IssuerRemoved {issuer})
+    }
+
+    // Read-only lookup that checks if this address is currently registered as an issuer
+    public fun is_issuer(registry_addr: address, issuer: address): bool acquires IssuerRegistry {
+        if (!exists<IssuerRegistry>(registry_addr)) {
+            return false;
+        };
+
+        let reg = borrow_global<IssuerRegistry>(registry_addr);
+        table::contains(&reg.issuers, issuer)
+    }
+
+    // Returns the admin address for this registry address
+    public fun admin_of(registry_addr: address): address acquires IssuerRegistry {
+        borrow_global<IssuerRegistry>(registry_addr).admin
+    }
+
+    /**
+        The 2 handles expose the registry's event streams for audit trail
+
+        Purpose:
+            1. Let client query history of issuer changes (who was added/removed and when)
+            2. Keep add/remove events separate so consumers can track each action cleanly
+     */
+    public fun issuer_added_handle(registry_addr: address): &event::EventHandle<IssuerAdded> acquires IssuerRegistry {
+        &borrow_global<IssuerRegistry>(registry_addr).issuer_added_events
+    }
+
+    public fun issuer_removed_handle(registry_addr: address): &event::EventHandle<IssuerRemoved> acquires IssuerRegistry {
+        &borrow_global<IssuerRegistry>(registry_addr).issuer_removed_events
     }
  }
