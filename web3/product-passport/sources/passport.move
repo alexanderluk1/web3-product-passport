@@ -6,23 +6,40 @@ module luxpass::passport {
     use aptos_framework::object;
     use aptos_framework::object::{Object, ObjectCore};
     use aptos_framework::signer;
+    use aptos_framework::table::{Self, Table};
     use aptos_framework::timestamp;
+    use aptos_framework::util;
     use std::string::String;
 
     use luxpass::issuer_registry;
 
+    // ----------------------
     // Error codes
+    // ----------------------
+
     const E_ALREADY_INITIALIZED: u64 = 1;
     const E_EVENTS_NOT_INITIALIZED: u64 = 2;
-    const E_NOT_ISSUER: u64 = 3;
-    const E_NOT_AUTHORIZED: u64 = 4;
-    const E_NOT_OWNER: u64 = 5;
-    const E_NOT_TRANSFERABLE: u64 = 6;
+    const E_INDEX_NOT_INITIALIZED: u64 = 3;
 
+    const E_NOT_ISSUER: u64 = 10;
+    const E_NOT_AUTHORIZED: u64 = 11;
+    const E_NOT_OWNER: u64 = 12;
+    const E_NOT_TRANSFERABLE: u64 = 13;
+
+    const E_DUPLICATE_PRODUCT_ID: u64 = 20;
+    const E_PRODUCT_NOT_FOUND: u64 = 21;
+
+    // ----------------------
     // Status values
+    // ----------------------
+
     const STATUS_ACTIVE: u8 = 1;
     const STATUS_SUSPENDED: u8 = 2;
     const STATUS_REVOKED: u8 = 3;
+
+    // ----------------------
+    // Passport data (stored under the passport Object address)
+    // ----------------------
 
     #[resource_group_member(group = aptos_framework::object::ObjectGroup)]
     struct Passport has key {
@@ -42,7 +59,34 @@ module luxpass::passport {
         transfer_ref: object::TransferRef,
     }
 
-    // Event payloads
+    // ----------------------
+    // On-chain Index (product id -> passport object address)
+    // ----------------------
+
+    // Stored under the registry/admin address.
+    // Maps `serial_key` (address derived from sha3_256(serial_plain)) -> passport object address.
+    struct PassportIndex has key {
+        serial_to_passport: Table<address, address>,
+    }
+
+    /// Initialize the PassportIndex under the admin/registry address.
+    /// Call once (same admin that runs init_events).
+    public entry fun init_index(admin: &signer) {
+        let admin_addr = signer::address_of(admin);
+        assert!(!exists<PassportIndex>(admin_addr), E_ALREADY_INITIALIZED);
+
+        move_to(
+            admin,
+            PassportIndex {
+                serial_to_passport: table::new<address, address>(),
+            },
+        );
+    }
+
+    // ----------------------
+    // Events (payload structs)
+    // ----------------------
+
     struct PassportMinted has drop, store { passport: address, issuer: address, owner: address }
     struct PassportTransferred has drop, store { passport: address, from: address, to: address }
     struct PassportStatusChanged has drop, store { passport: address, old_status: u8, new_status: u8 }
@@ -69,7 +113,23 @@ module luxpass::passport {
         );
     }
 
+    // ----------------------
+    // Helper: derive serial_key (address) from serial_plain bytes
+    // ----------------------
+
+    fun serial_key_from_plain(serial_plain: vector<u8>): (vector<u8>, address) {
+        let serial_hash = hash::sha3_256(serial_plain);
+        // sha3_256 returns 32 bytes; convert directly into an address key.
+        let serial_key = util::address_from_bytes(copy serial_hash);
+        (serial_hash, serial_key)
+    }
+
+    // ----------------------
+    // Entry functions
+    // ----------------------
+
     // Mint a new passport Object owned by `owner`.
+    // Also writes mapping: serial_key -> passport_object_addr into PassportIndex.
     public entry fun mint(
         issuer: &signer,
         registry_addr: address,
@@ -78,12 +138,19 @@ module luxpass::passport {
         metadata_uri: String,
         metadata_bytes: vector<u8>,
         transferable: bool,
-    ) acquires PassportEvents {
+    ) acquires PassportEvents, PassportIndex {
         let issuer_addr = signer::address_of(issuer);
         assert!(issuer_registry::is_issuer(registry_addr, issuer_addr), E_NOT_ISSUER);
 
-        let serial_hash = hash::sha3_256(serial_plain);
+        assert!(exists<PassportIndex>(registry_addr), E_INDEX_NOT_INITIALIZED);
+        assert!(exists<PassportEvents>(registry_addr), E_EVENTS_NOT_INITIALIZED);
+
+        let (serial_hash, serial_key) = serial_key_from_plain(serial_plain);
         let metadata_hash = hash::sha3_256(metadata_bytes);
+
+        // Enforce uniqueness: one passport per product id
+        let idx = borrow_global_mut<PassportIndex>(registry_addr);
+        assert!(!table::contains(&idx.serial_to_passport, serial_key), E_DUPLICATE_PRODUCT_ID);
 
         // Create object owned by `owner`
         let constructor_ref = object::create_object(owner);
@@ -114,11 +181,14 @@ module luxpass::passport {
             },
         );
 
-        // Emit mint event
+        // Get passport object address
         let obj: Object<ObjectCore> = object::object_from_constructor_ref<ObjectCore>(&constructor_ref);
         let passport_addr = object::object_address(&obj);
 
-        assert!(exists<PassportEvents>(registry_addr), E_EVENTS_NOT_INITIALIZED);
+        // Write mapping serial_key -> passport_addr
+        table::add(&mut idx.serial_to_passport, serial_key, passport_addr);
+
+        // Emit mint event
         let ev = borrow_global_mut<PassportEvents>(registry_addr);
         event::emit_event(&mut ev.minted, PassportMinted { passport: passport_addr, issuer: issuer_addr, owner });
     }
@@ -168,10 +238,32 @@ module luxpass::passport {
         event::emit_event(&mut ev.status_changed, PassportStatusChanged { passport: passport_addr, old_status: old, new_status });
     }
 
+    // ----------------------
+    // View functions
+    // ----------------------
+
     #[view]
     public fun get_passport(passport_addr: address): (address, vector<u8>, String, vector<u8>, u8, bool, u64) acquires Passport {
         let p = borrow_global<Passport>(passport_addr);
         (p.issuer, p.serial_hash, p.metadata_uri, p.metadata_hash, p.status, p.transferable, p.created_at_secs)
+    }
+
+    // Backend can derive the same serial key as:
+    // - serial_key = util::address_from_bytes(sha3_256(product_id_bytes))
+    #[view]
+    public fun passport_address_for_serial(registry_addr: address, serial_key: address): address acquires PassportIndex {
+        assert!(exists<PassportIndex>(registry_addr), E_INDEX_NOT_INITIALIZED);
+        let idx = borrow_global<PassportIndex>(registry_addr);
+        assert!(table::contains(&idx.serial_to_passport, serial_key), E_PRODUCT_NOT_FOUND);
+        *table::borrow(&idx.serial_to_passport, serial_key)
+    }
+
+    // Convenience: accept raw product id bytes (serial/tag uid),
+    // derive serial_key internally, and return the passport address.
+    #[view]
+    public fun passport_address_for_product_id(registry_addr: address, serial_plain: vector<u8>): address acquires PassportIndex {
+        let (_hash, serial_key) = serial_key_from_plain(serial_plain);
+        passport_address_for_serial(registry_addr, serial_key)
     }
 
     #[view]
