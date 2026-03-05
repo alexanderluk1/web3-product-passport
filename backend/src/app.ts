@@ -1,4 +1,5 @@
 import express, { type Request, type Response, type NextFunction } from "express";
+import { passportRouter } from "./modules/passport/passport.routes";
 
 /**
  * Create and configure the Express app.
@@ -25,7 +26,7 @@ export function createApp() {
     res.json({ ok: true });
   });
 
-  // API base (we'll mount real routers here soon)
+  // API Documentation
   app.get("/api", (_req, res) => {
     res.json({
       ok: true,
@@ -33,12 +34,22 @@ export function createApp() {
       routes: [
         "GET /health",
         "GET /api",
+        "GET /api/passports/:passportObjectAddr",
         // upcoming:
-        // "GET /api/passports/:passportObjectAddr",
-        // "GET /api/issuers/:address/is-allowed",
+        	// 1.	GET /api/passports/:passportAddr → get_passport
+            // 2.	GET /api/issuers/:addr/is-allowed → is_issuer
+            // 3.	POST /api/passports/verify → hash compare + status check
+
+            // Then later:
+            // 4. POST /api/passports/mint (server-signed)
+            // 5. POST /api/passports/:addr/status (server-signed)
+            // 6. GET /api/passports/:addr/activity (events timeline)
       ],
     });
   });
+
+  // Actual route 
+  app.use("/api/passports", passportRouter)
 
   // ---- 404 ----
   app.use((_req, res) => {
