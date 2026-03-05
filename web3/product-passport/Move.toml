@@ -6,6 +6,8 @@ authors = []
 [addresses]
 
 [dev-addresses]
+luxpass = ""
+
 
 [dependencies.AptosFramework]
 git = "https://github.com/aptos-labs/aptos-framework.git"
