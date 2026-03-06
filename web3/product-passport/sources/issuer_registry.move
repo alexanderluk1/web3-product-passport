@@ -8,6 +8,7 @@ module luxpass::issuer_registry {
     // Error codes
     const E_ALREADY_INITIALIZED: u64 = 1;
     const E_NOT_ADMIN: u64 = 2;
+    const E_REGISTRY_NOT_FOUND: u64 = 3;
 
     // Registry singleton stored under the admin address that calls `init()`
     struct IssuerRegistry has key {
@@ -67,6 +68,19 @@ module luxpass::issuer_registry {
         };
         let reg = borrow_global<IssuerRegistry>(registry_addr);
         table::contains(&reg.issuers, issuer)
+    }
+
+    // Returns high-level registry metadata.
+    // Note: issuer addresses are stored in Table and are not iterable on-chain.
+    #[view]
+    public fun get_registry(registry_addr: address): (address, u64, u64) acquires IssuerRegistry {
+        assert!(exists<IssuerRegistry>(registry_addr), E_REGISTRY_NOT_FOUND);
+        let reg = borrow_global<IssuerRegistry>(registry_addr);
+        (
+            reg.admin,
+            event::counter(&reg.issuer_added_events),
+            event::counter(&reg.issuer_removed_events),
+        )
     }
 
     // Returns the admin address for this registry

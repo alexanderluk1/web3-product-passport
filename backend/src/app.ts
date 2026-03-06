@@ -1,6 +1,7 @@
 import express, { type Request, type Response, type NextFunction } from "express";
 import { passportRouter } from "./modules/passport/passport.routes";
 import authRouter from "./modules/auth/routes/auth.routes";
+import adminRegistryRouter from "./modules/admin/routes/adminRegistry.routes";
 
 /**
  * Create and configure the Express app.
@@ -80,6 +81,7 @@ export function createApp() {
   // Actual route 
   app.use("/api/passports", passportRouter)
   app.use("/auth", authRouter);
+  app.use("/admin", adminRegistryRouter);
 
   // ---- 404 ----
   app.use((_req, res) => {
