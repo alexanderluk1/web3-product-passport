@@ -24,7 +24,7 @@ export function markChallengeUsed(challengeId: string): void {
 export function deleteExpiredChallenges(): void {
   const now = Date.now();
 
-  for (const [id, challenge] of challengeStore.entries()) {
+  for (const [id, challenge] of Array.from(challengeStore.entries())) {
     if (challenge.expiresAt <= now) {
       challengeStore.delete(id);
     }
