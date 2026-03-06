@@ -2,6 +2,7 @@ import express, { type Request, type Response, type NextFunction } from "express
 import { passportRouter } from "./modules/passport/passport.routes";
 import authRouter from "./modules/auth/routes/auth.routes";
 import adminRegistryRouter from "./modules/admin/routes/adminRegistry.routes";
+import issuerRegistryRoutes from "./modules/issuerRegistry/routes/issuerRegistry.routes"
 
 /**
  * Create and configure the Express app.
@@ -82,6 +83,7 @@ export function createApp() {
   app.use("/api/passports", passportRouter)
   app.use("/auth", authRouter);
   app.use("/admin", adminRegistryRouter);
+  app.use("/admin", issuerRegistryRoutes);
 
   // ---- 404 ----
   app.use((_req, res) => {
