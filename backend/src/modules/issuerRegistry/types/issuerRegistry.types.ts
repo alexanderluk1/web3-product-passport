@@ -6,7 +6,8 @@ export type RegisterIssuerResponse =
   | {
       success: true;
       issuerAddress: string;
-      transactionHash: string;
+      transactionHash?: string;
+      source?: "CHAIN" | "STORE";
     }
   | {
       success: false;

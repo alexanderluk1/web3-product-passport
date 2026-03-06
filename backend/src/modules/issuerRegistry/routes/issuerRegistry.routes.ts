@@ -16,6 +16,13 @@ router.get(
 );
 
 router.post(
+  "/issuers/register",
+  requireAuth,
+  requireRole("ADMIN"),
+  registerIssuerHandler
+);
+
+router.post(
   "/issuers",
   requireAuth,
   requireRole("ADMIN"),

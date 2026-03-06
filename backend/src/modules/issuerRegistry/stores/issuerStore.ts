@@ -34,6 +34,12 @@ export function getAllIssuers(): StoredIssuer[] {
     .sort((a, b) => b.registeredAt - a.registeredAt);
 }
 
+export function hasActiveIssuer(issuerAddress: string): boolean {
+  const normalized = normalizeAddress(issuerAddress);
+  const issuer = issuerStore.get(normalized);
+  return issuer?.status === "ACTIVE";
+}
+
 export function getActiveIssuers(): StoredIssuer[] {
   return getAllIssuers().filter((issuer) => issuer.status === "ACTIVE");
 }

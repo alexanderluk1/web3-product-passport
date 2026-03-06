@@ -24,7 +24,7 @@ router.post(
 );
 
 router.get(
-  "/issuers",
+  "/registry/issuers",
   requireAuth,
   requireRole("ADMIN"),
   getIssuersHandler

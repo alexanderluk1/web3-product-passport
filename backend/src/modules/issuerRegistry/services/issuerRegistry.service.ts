@@ -6,7 +6,11 @@ import {
   GetAllIssuersResponse,
   RegisterIssuerResponse,
 } from "../types/issuerRegistry.types";
-import { saveIssuer, getAllIssuers as readAllIssuers } from "../stores/issuerStore";
+import {
+  hasActiveIssuer,
+  saveIssuer,
+  getAllIssuers as readAllIssuers,
+} from "../stores/issuerStore";
 
 const aptos = makeAptosClient();
 const ADMIN_PRIVATE_KEY = process.env.ADMIN_PRIVATE_KEY!;
@@ -35,6 +39,21 @@ function getBackendSignerAddress(): string {
   return account.accountAddress.toString().toLowerCase();
 }
 
+function isIssuerAlreadyOnChain(params: {
+  error?: string;
+  vmStatus?: string;
+}): boolean {
+  const combined = `${params.error ?? ""} ${params.vmStatus ?? ""}`.toLowerCase();
+  return (
+    combined.includes("issuer already exists") ||
+    combined.includes("issuer_already_exists") ||
+    combined.includes("already exists") ||
+    combined.includes("abort code: 4") ||
+    combined.includes("abort_code: 4") ||
+    combined.includes("code 4")
+  );
+}
+
 export const issuerRegistryService = {
   async registerIssuer(
     adminWalletAddress: string,
@@ -45,6 +64,14 @@ export const issuerRegistryService = {
     const normalizedAdminWallet = normalizeAddress(adminWalletAddress);
     const normalizedIssuerAddress = normalizeAddress(issuerAddress);
     const backendSignerAddress = getBackendSignerAddress();
+
+    if (hasActiveIssuer(normalizedIssuerAddress)) {
+      return {
+        success: true,
+        issuerAddress: normalizedIssuerAddress,
+        source: "STORE",
+      };
+    }
 
     if (normalizedAdminWallet !== backendSignerAddress) {
       return {
@@ -65,6 +92,16 @@ export const issuerRegistryService = {
     const result = await writeRegisterIssuer(aptos, normalizedIssuerAddress);
 
     if (!result.success) {
+      if (isIssuerAlreadyOnChain({ error: result.error, vmStatus: result.vmStatus })) {
+        saveIssuer(normalizedIssuerAddress);
+        return {
+          success: true,
+          issuerAddress: normalizedIssuerAddress,
+          transactionHash: result.transactionHash,
+          source: "STORE",
+        };
+      }
+
       return {
         success: false,
         error: result.error,
@@ -79,6 +116,7 @@ export const issuerRegistryService = {
       success: true,
       issuerAddress: normalizedIssuerAddress,
       transactionHash: result.transactionHash,
+      source: "CHAIN",
     };
   },
 
