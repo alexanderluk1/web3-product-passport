@@ -17,23 +17,26 @@ function normalizeWalletAddress(walletAddress: string): string {
   return walletAddress.trim().toLowerCase();
 }
 
+function parseWalletList(input?: string): Set<string> {
+  if (!input) {
+    return new Set<string>();
+  }
+
+  return new Set(
+    input
+      .split(",")
+      .map((wallet) => normalizeWalletAddress(wallet))
+      .filter(Boolean)
+  );
+}
+
+const adminWallets = parseWalletList(process.env.ADMIN_WALLETS);
+
 function determineRole(walletAddress: string): UserRole {
   const normalizedWalletAddress = normalizeWalletAddress(walletAddress);
 
-  const adminWallets = new Set<string>([
-    "0xadminwalletreplace",
-  ]);
-
-  const issuerWallets = new Set<string>([
-    "0xissuerwalletreplace",
-  ]);
-
   if (adminWallets.has(normalizedWalletAddress)) {
     return "ADMIN";
-  }
-
-  if (issuerWallets.has(normalizedWalletAddress)) {
-    return "ISSUER";
   }
 
   return "USER";
