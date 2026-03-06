@@ -38,3 +38,16 @@ export async function registerIssuerHandler(req: Request, res: Response) {
     });
   }
 }
+
+export async function getAllIssuersHandler(_req: Request, res: Response) {
+  try {
+    const result = await issuerRegistryService.getAllIssuers();
+    return res.status(200).json(result);
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error:
+        error instanceof Error ? error.message : "Failed to retrieve issuers.",
+    });
+  }
+}

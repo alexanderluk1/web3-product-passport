@@ -2,8 +2,11 @@ import { Account, Ed25519PrivateKey } from "@aptos-labs/ts-sdk";
 import { makeAptosClient } from "../../../config/aptos";
 import { getRegistryStatus } from "../../../chains/luxpass/readers/getRegistryStatus";
 import { registerIssuer as writeRegisterIssuer } from "../../../chains/luxpass/writers/registerIssuer";
-import { REGISTRY_ADDRESS } from "../../../chains/luxpass/constants";
-import { RegisterIssuerResponse } from "../types/issuerRegistry.types";
+import {
+  GetAllIssuersResponse,
+  RegisterIssuerResponse,
+} from "../types/issuerRegistry.types";
+import { saveIssuer, getAllIssuers as readAllIssuers } from "../stores/issuerStore";
 
 const aptos = makeAptosClient();
 const ADMIN_PRIVATE_KEY = process.env.ADMIN_PRIVATE_KEY!;
@@ -50,7 +53,7 @@ export const issuerRegistryService = {
       };
     }
 
-    const registryStatus = await getRegistryStatus(aptos, REGISTRY_ADDRESS);
+    const registryStatus = await getRegistryStatus(aptos, normalizedAdminWallet);
 
     if (!registryStatus.initialized) {
       return {
@@ -70,10 +73,18 @@ export const issuerRegistryService = {
       };
     }
 
+    saveIssuer(normalizedIssuerAddress);
+
     return {
       success: true,
       issuerAddress: normalizedIssuerAddress,
       transactionHash: result.transactionHash,
+    };
+  },
+
+  async getAllIssuers(): Promise<GetAllIssuersResponse> {
+    return {
+      issuers: readAllIssuers(),
     };
   },
 };

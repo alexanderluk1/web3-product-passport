@@ -14,3 +14,14 @@ export type RegisterIssuerResponse =
       transactionHash?: string;
       vmStatus?: string;
     };
+
+export type IssuerListItem = {
+  issuerAddress: string;
+  status: "ACTIVE" | "REMOVED";
+  registeredAt: number;
+  removedAt?: number;
+};
+
+export type GetAllIssuersResponse = {
+  issuers: IssuerListItem[];
+};

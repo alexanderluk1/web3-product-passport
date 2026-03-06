@@ -5,12 +5,11 @@ module luxpass::issuer_registry {
     use aptos_framework::signer;
     use aptos_framework::table::{Self, Table};
 
-    // Error codes
     const E_ALREADY_INITIALIZED: u64 = 1;
     const E_NOT_ADMIN: u64 = 2;
     const E_REGISTRY_NOT_FOUND: u64 = 3;
+    const E_ISSUER_ALREADY_EXISTS: u64 = 4;
 
-    // Registry singleton stored under the admin address that calls `init()`
     struct IssuerRegistry has key {
         admin: address,
         issuers: Table<address, bool>,
@@ -18,11 +17,9 @@ module luxpass::issuer_registry {
         issuer_removed_events: event::EventHandle<IssuerRemoved>,
     }
 
-    // Event payloads
     struct IssuerAdded has drop, store { issuer: address }
     struct IssuerRemoved has drop, store { issuer: address }
 
-    // Init the registry under `admin`
     public entry fun init(admin: &signer) {
         let admin_addr = signer::address_of(admin);
         assert!(!exists<IssuerRegistry>(admin_addr), E_ALREADY_INITIALIZED);
@@ -38,7 +35,11 @@ module luxpass::issuer_registry {
         );
     }
 
-    // Checks if caller is admin
+    // Backward-compatible alias for older clients.
+    public entry fun init_registry(admin: &signer) {
+        init(admin);
+    }
+
     fun assert_admin(reg: &IssuerRegistry, caller: address) {
         assert!(caller == reg.admin, E_NOT_ADMIN);
     }
@@ -48,8 +49,18 @@ module luxpass::issuer_registry {
         let reg = borrow_global_mut<IssuerRegistry>(admin_addr);
         assert_admin(reg, admin_addr);
 
-        table::upsert(&mut reg.issuers, issuer, true);
+        assert!(
+            !table::contains(&reg.issuers, issuer),
+            E_ISSUER_ALREADY_EXISTS
+        );
+
+        table::add(&mut reg.issuers, issuer, true);
         event::emit_event(&mut reg.issuer_added_events, IssuerAdded { issuer });
+    }
+
+    // Backward-compatible alias for older clients.
+    public entry fun register_issuer(admin: &signer, issuer: address) acquires IssuerRegistry {
+        add_issuer(admin, issuer);
     }
 
     public entry fun remove_issuer(admin: &signer, issuer: address) acquires IssuerRegistry {
@@ -61,7 +72,11 @@ module luxpass::issuer_registry {
         event::emit_event(&mut reg.issuer_removed_events, IssuerRemoved { issuer });
     }
 
-    // Read-only lookup: checks if `issuer` is currently allowlisted
+    // Backward-compatible alias for older clients.
+    public entry fun revoke_issuer(admin: &signer, issuer: address) acquires IssuerRegistry {
+        remove_issuer(admin, issuer);
+    }
+
     public fun is_issuer(registry_addr: address, issuer: address): bool acquires IssuerRegistry {
         if (!exists<IssuerRegistry>(registry_addr)) {
             return false;
@@ -70,8 +85,6 @@ module luxpass::issuer_registry {
         table::contains(&reg.issuers, issuer)
     }
 
-    // Returns high-level registry metadata.
-    // Note: issuer addresses are stored in Table and are not iterable on-chain.
     #[view]
     public fun get_registry(registry_addr: address): (address, u64, u64) acquires IssuerRegistry {
         assert!(exists<IssuerRegistry>(registry_addr), E_REGISTRY_NOT_FOUND);
@@ -83,12 +96,10 @@ module luxpass::issuer_registry {
         )
     }
 
-    // Returns the admin address for this registry
     public fun admin_of(registry_addr: address): address acquires IssuerRegistry {
         borrow_global<IssuerRegistry>(registry_addr).admin
     }
 
-    // Expose event stream metadata for off-chain audit trail
     public fun issuer_added_handle(registry_addr: address): (guid::ID, u64) acquires IssuerRegistry {
         let h = &borrow_global<IssuerRegistry>(registry_addr).issuer_added_events;
         (guid::id(event::guid(h)), event::counter(h))

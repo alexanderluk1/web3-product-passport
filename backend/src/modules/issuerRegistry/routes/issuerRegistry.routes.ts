@@ -1,19 +1,22 @@
 import { Router } from "express";
-import { registerIssuerHandler } from "../controllers/issuerRegistry.controller";
+import {
+  getAllIssuersHandler,
+  registerIssuerHandler,
+} from "../controllers/issuerRegistry.controller";
 import { requireAuth } from "../../auth/middleware/requireAuth";
 import { requireRole } from "../../auth/middleware/requireRole";
 
 const router = Router();
 
-router.post(
+router.get(
   "/issuers",
   requireAuth,
   requireRole("ADMIN"),
-  registerIssuerHandler
+  getAllIssuersHandler
 );
 
 router.post(
-  "/issuers/register",
+  "/issuers",
   requireAuth,
   requireRole("ADMIN"),
   registerIssuerHandler
