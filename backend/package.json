@@ -15,8 +15,10 @@
   "type": "module",
   "dependencies": {
     "@aptos-labs/ts-sdk": "^6.1.0",
+    "crypto": "^1.0.1",
     "dotenv": "^17.3.1",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3"
   },
   "devDependencies": {
     "tsx": "^4.21.0"
