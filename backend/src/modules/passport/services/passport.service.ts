@@ -1,4 +1,5 @@
 import {
+  GetProductByIdResponse,
   GetIssuerProductsResponse,
   PassportMetadata,
   PrepareMintPassportRequestBody,
@@ -184,6 +185,30 @@ function parseTransferable(value: unknown): boolean {
   return true;
 }
 
+function decodeProductIdInput(productId: string): string {
+  const normalized = validateRequiredString(productId, "productId");
+
+  if (/^0x[0-9a-fA-F]+$/.test(normalized) && normalized.length > 2) {
+    const hex = normalized.slice(2);
+    const padded = hex.length % 2 === 0 ? hex : `0${hex}`;
+
+    try {
+      const decoded = Buffer.from(padded, "hex").toString("utf8");
+      if (decoded.trim()) {
+        return decoded;
+      }
+    } catch {
+      // fall back to raw input
+    }
+  }
+
+  return normalized;
+}
+
+function toUtf8Hex(value: string): string {
+  return `0x${Buffer.from(value, "utf8").toString("hex")}`;
+}
+
 export const passportService = {
   async getPassport(passportObjectAddr: string) {
     return getPassport(aptos, passportObjectAddr);
@@ -287,6 +312,46 @@ export const passportService = {
       source: "chain",
       syncedAt: saved.syncedAt,
       products: saved.products,
+    };
+  },
+
+  async getProductById(productId: string): Promise<GetProductByIdResponse> {
+    const productIdPlain = decodeProductIdInput(productId);
+    const productIdHex = toUtf8Hex(productIdPlain);
+
+    const passportObjectAddr = await resolvePassportObjAddrByProductId(aptos, productIdPlain);
+    const passport = await getPassport(aptos, passportObjectAddr);
+    const issuerAddress = normalizeAddress(passport.issuer);
+    const registryAddress = normalizeAddress(REGISTRY_ADDRESS);
+
+    // Pull a larger history window when querying a specific product.
+    const issuerProducts = await getIssuerMintedProducts(issuerAddress, 500);
+    const matchingProduct = issuerProducts.find((product) => {
+      const serialHex = toUtf8Hex(product.serialNumber).toLowerCase();
+      return (
+        product.serialNumber === productIdPlain ||
+        serialHex === productIdHex.toLowerCase()
+      );
+    });
+
+    const createdAtSecs = Number(passport.createdAtSecs);
+    const mintedAtFallback = Number.isFinite(createdAtSecs)
+      ? Math.floor(createdAtSecs * 1_000)
+      : undefined;
+
+    return {
+      passportObjectAddr: normalizeAddress(passportObjectAddr),
+      issuerAddress,
+      ownerAddress: matchingProduct?.ownerAddress,
+      registryAddress,
+      serialNumber: productIdHex,
+      serialNumberPlain: productIdPlain,
+      metadataUri: matchingProduct?.metadataUri ?? passport.metadataUri,
+      transferable: matchingProduct?.transferable ?? passport.transferable,
+      transactionHash: matchingProduct?.transactionHash,
+      transactionVersion: matchingProduct?.transactionVersion,
+      mintedAt: matchingProduct?.mintedAt ?? mintedAtFallback,
+      status: passport.status,
     };
   },
 };

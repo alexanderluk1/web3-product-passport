@@ -71,3 +71,18 @@ export type IssuerProductCacheEntry = {
   syncedAt: number;
   products: IssuerProduct[];
 };
+
+export type GetProductByIdResponse = {
+  passportObjectAddr: string;
+  issuerAddress: string;
+  ownerAddress?: string;
+  registryAddress: string;
+  serialNumber: string;
+  serialNumberPlain: string;
+  metadataUri: string;
+  transferable: boolean;
+  transactionHash?: string;
+  transactionVersion?: string;
+  mintedAt?: number;
+  status: number;
+};

@@ -93,7 +93,8 @@ type AptosUserTransaction = {
 };
 
 export async function getIssuerMintedProducts(
-  issuerAddress: string
+  issuerAddress: string,
+  limit = 100
 ): Promise<IssuerProduct[]> {
   if (!MODULE_ADDRESS) {
     throw new Error("MODULE_ADDRESS is not configured for minted-products reader.");
@@ -102,7 +103,7 @@ export async function getIssuerMintedProducts(
   const normalizedIssuer = normalizeAddress(issuerAddress);
 
   const response = await fetch(
-    `${FULLNODE_URL}/accounts/${normalizedIssuer}/transactions?limit=100`
+    `${FULLNODE_URL}/accounts/${normalizedIssuer}/transactions?limit=${limit}`
   );
 
   if (!response.ok) {

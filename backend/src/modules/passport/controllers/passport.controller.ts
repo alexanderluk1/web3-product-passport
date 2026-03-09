@@ -1,10 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
-import { makeAptosClient } from "../../../config/aptos";
-import { resolvePassportObjAddrByProductId } from "../../../chains/luxpass/readers";
 import { passportService } from "../services/passport.service";
 import type { PrepareMintPassportRequestBody } from "../types/passport.types";
-
-const aptos = makeAptosClient();
 
 function normalizeByteVectorLike(value: unknown): unknown {
   if (ArrayBuffer.isView(value)) {
@@ -93,9 +89,25 @@ export async function getPassportByProductIdHandler(
 ) {
   try {
     const productId = req.params.productId;
-    const passportObjectAddr = await resolvePassportObjAddrByProductId(aptos, productId);
-    return res.status(200).json({ ok: true, passportObjectAddr });
+    const product = await passportService.getProductById(productId);
+    return res.status(200).json({ ok: true, product });
   } catch (e) {
+    if (e instanceof Error) {
+      const message = e.message.toLowerCase();
+      const isNotFound =
+        message.includes("e_product_not_found") ||
+        message.includes("product_not_found") ||
+        message.includes("abort code: 21") ||
+        message.includes("abort_code: 21");
+
+      if (isNotFound) {
+        return res.status(404).json({
+          ok: false,
+          error: "Product not found.",
+        });
+      }
+    }
+
     return next(e);
   }
 }
