@@ -1,5 +1,5 @@
 import express, { type Request, type Response, type NextFunction } from "express";
-import { passportRouter } from "./modules/passport/passport.routes";
+import { passportRouter } from "./modules/passport/routes/passport.routes";
 import authRouter from "./modules/auth/routes/auth.routes";
 import adminRegistryRouter from "./modules/admin/routes/adminRegistry.routes";
 import issuerRegistryRoutes from "./modules/issuerRegistry/routes/issuerRegistry.routes"
