@@ -48,3 +48,26 @@ export type PrepareMintPassportResponse =
         success: false;
         error: string;
     }
+
+export type IssuerProduct = {
+  transactionVersion: string;
+  transactionHash: string;
+  issuerAddress: string;
+  ownerAddress: string;
+  registryAddress: string;
+  serialNumber: string;
+  metadataUri: string;
+  transferable: boolean;
+  mintedAt?: number;
+};
+
+export type GetIssuerProductsResponse = {
+  source: "cache" | "chain";
+  syncedAt: number;
+  products: IssuerProduct[];
+};
+
+export type IssuerProductCacheEntry = {
+  syncedAt: number;
+  products: IssuerProduct[];
+};

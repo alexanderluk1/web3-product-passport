@@ -1,31 +1,29 @@
 import {
+  GetIssuerProductsResponse,
   PassportMetadata,
   PrepareMintPassportRequestBody,
   PrepareMintPassportResponse,
-  PreparedMintPayload
+  PreparedMintPayload,
 } from "../types/passport.types";
+import { normalizeAddress, validateWalletAddress } from "../../../utils/walletHelper";
 import {
-  validateWalletAddress,
-  normalizeAddress
-} from "../../../utils/walletHelper"
-import {
+  parseMaterials,
   validateImageFile,
   validateRequiredString,
-  parseMaterials
-} from "../../../utils/processHelper"
-
-import {
-  uploadImageToPinata,
-  uploadMetadataToPinata
-} from "../../../utils/pinataHelper"
-
+} from "../../../utils/processHelper";
+import { uploadImageToPinata, uploadMetadataToPinata } from "../../../utils/pinataHelper";
 import { makeAptosClient } from "../../../config/aptos";
 import {
   getPassport,
   resolvePassportObjAddrByProductId,
 } from "../../../chains/luxpass/readers";
+import { getIssuerMintedProducts } from "../../../chains/luxpass/readers/getIssuerMintedProducts";
 import { REGISTRY_ADDRESS } from "../../../chains/luxpass/constants";
 import { initRegistry as writeInitRegistry } from "../../../chains/luxpass/writers/initRegistry";
+import {
+  getIssuerProductsFromStore,
+  saveIssuerProductsToStore,
+} from "../store/productStore";
 
 const aptos = makeAptosClient();
 
@@ -33,6 +31,7 @@ const MODULE_ADDRESS = process.env.MODULE_ADDRESS!;
 const PASSPORT_MODULE_NAME = "passport";
 const PASSPORT_MINT_FUNCTION = "mint";
 const PASSPORT_INIT_PROBE_PRODUCT_ID = "__luxpass_passport_init_probe__";
+const PRODUCT_CACHE_TTL_MS = 60 * 1000;
 
 function hasMoveAbortCode(error: unknown, code: number): boolean {
   if (!(error instanceof Error)) {
@@ -71,7 +70,7 @@ async function ensurePassportInfrastructureInitialized(): Promise<void> {
     return;
   } catch (error) {
     if (isProductNotFoundError(error)) {
-      // Passport index exists; probe ID just doesn't exist.
+      // Passport index exists; probe ID does not.
       return;
     }
 
@@ -162,6 +161,29 @@ function buildMintPayload(params: {
   };
 }
 
+function isCacheFresh(syncedAt: number): boolean {
+  return Date.now() - syncedAt < PRODUCT_CACHE_TTL_MS;
+}
+
+function parseTransferable(value: unknown): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "false" || normalized === "0" || normalized === "no") {
+      return false;
+    }
+    if (normalized === "true" || normalized === "1" || normalized === "yes") {
+      return true;
+    }
+  }
+
+  // Default behavior: transferable by default when omitted/invalid.
+  return true;
+}
+
 export const passportService = {
   async getPassport(passportObjectAddr: string) {
     return getPassport(aptos, passportObjectAddr);
@@ -200,14 +222,10 @@ export const passportService = {
     const normalizedOwnerAddress = normalizeAddress(body.ownerAddress);
     const normalizedRegistryAddress = normalizeAddress(REGISTRY_ADDRESS);
     const serialPlainBytes = Array.from(Buffer.from(serialNumber, "utf8"));
-    const transferable = typeof body.transferable === "boolean" ? body.transferable : false;
+    const transferable = parseTransferable(body.transferable);
 
     // Ensure one-time on-chain passport resources exist before mint payload is used.
     await ensurePassportInfrastructureInitialized();
-
-    // TODO:
-    // 1. Check req.user is actually an approved issuer on-chain
-    // 2. Optionally reject duplicate serial/productId before preparing payload
 
     const imageUpload = await uploadImageToPinata(imageFile);
 
@@ -224,7 +242,9 @@ export const passportService = {
     });
 
     const metadataUpload = await uploadMetadataToPinata(metadata);
-    const metadataBytes = Array.from(Buffer.from(JSON.stringify(metadata), "utf8"));
+    // Keep hash bytes aligned with uploaded JSON payload formatting.
+    const metadataJson = JSON.stringify(metadata, null, 2);
+    const metadataBytes = Array.from(Buffer.from(metadataJson, "utf8"));
 
     const payload = buildMintPayload({
       registryAddress: normalizedRegistryAddress,
@@ -243,6 +263,30 @@ export const passportService = {
       metadataIpfsUri: metadataUpload.ipfsUri,
       metadata,
       payload,
+    };
+  },
+
+  async getIssuerProducts(issuerWalletAddress: string): Promise<GetIssuerProductsResponse> {
+    validateWalletAddress(issuerWalletAddress, "issuer wallet address");
+    const normalizedIssuerAddress = normalizeAddress(issuerWalletAddress);
+
+    const cached = getIssuerProductsFromStore(normalizedIssuerAddress);
+
+    if (cached && cached.products.length > 0 && isCacheFresh(cached.syncedAt)) {
+      return {
+        source: "cache",
+        syncedAt: cached.syncedAt,
+        products: cached.products,
+      };
+    }
+
+    const products = await getIssuerMintedProducts(normalizedIssuerAddress);
+    const saved = saveIssuerProductsToStore(normalizedIssuerAddress, products);
+
+    return {
+      source: "chain",
+      syncedAt: saved.syncedAt,
+      products: saved.products,
     };
   },
 };

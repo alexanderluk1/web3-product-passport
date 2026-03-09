@@ -1,7 +1,10 @@
-import type { Request, Response, NextFunction } from "express";
-import { passportService } from "../services/passport.service";
+import type { NextFunction, Request, Response } from "express";
+import { makeAptosClient } from "../../../config/aptos";
 import { resolvePassportObjAddrByProductId } from "../../../chains/luxpass/readers";
-import { PrepareMintPassportRequestBody } from "../types/passport.types";
+import { passportService } from "../services/passport.service";
+import type { PrepareMintPassportRequestBody } from "../types/passport.types";
+
+const aptos = makeAptosClient();
 
 function normalizeByteVectorLike(value: unknown): unknown {
   if (ArrayBuffer.isView(value)) {
@@ -42,7 +45,7 @@ export async function prepareMintPassportHandler(req: Request, res: Response) {
     const result = await passportService.prepareMintPassport({
       issuerWalletAddress: req.user.walletAddress,
       body: req.body as PrepareMintPassportRequestBody,
-      imageFile: req.file
+      imageFile: req.file,
     });
 
     if (!result.success) {
@@ -64,28 +67,58 @@ export async function prepareMintPassportHandler(req: Request, res: Response) {
     console.error("[passport] prepare mint failed:", error);
     return res.status(400).json({
       success: false,
-      error: error instanceof Error ? error.message : "Failed to prepare mint passport payload",
-    })
-  };
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to prepare mint passport payload",
+    });
+  }
 }
 
 export async function getPassportHandler(req: Request, res: Response, next: NextFunction) {
   try {
     const passportObjectAddr = req.params.passportObjectAddr;
     const data = await passportService.getPassport(passportObjectAddr);
-    res.json({ ok: true, data });
+    return res.status(200).json({ ok: true, data });
   } catch (err) {
-    next(err);
+    return next(err);
   }
 }
 
 // GET /api/passports/by-product/:productId
-export async function getPassportByProductId(req, res, next) {
+export async function getPassportByProductIdHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
   try {
-    const productId = req.params.productId; // "serial-124"
+    const productId = req.params.productId;
     const passportObjectAddr = await resolvePassportObjAddrByProductId(aptos, productId);
-    res.json({ ok: true, passportObjectAddr });
+    return res.status(200).json({ ok: true, passportObjectAddr });
   } catch (e) {
-    next(e);
+    return next(e);
+  }
+}
+
+export async function getIssuerProductsHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const result = await passportService.getIssuerProducts(req.user.walletAddress);
+
+    return res.status(200).json(result);
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to retrieve issuer products.",
+    });
   }
 }

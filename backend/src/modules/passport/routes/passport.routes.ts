@@ -1,6 +1,11 @@
 import { Router } from "express";
 import { createRequire } from "node:module";
-import { getPassportHandler, prepareMintPassportHandler } from "../controllers/passport.controller";
+import {
+  getIssuerProductsHandler,
+  getPassportByProductIdHandler,
+  getPassportHandler,
+  prepareMintPassportHandler,
+} from "../controllers/passport.controller";
 import { requireAuth } from "../../auth/middleware/requireAuth";
 import { requireRole } from "../../auth/middleware/requireRole";
 
@@ -15,10 +20,16 @@ const upload = multer({
     },
 });
 
-passportRouter.get("/:passportObjectAddr", getPassportHandler);
 passportRouter.post("/mint/prepare",
     requireAuth,
     requireRole("ISSUER", "ADMIN"),
     upload.single("image"),
     prepareMintPassportHandler
 );
+passportRouter.get("/products",
+    requireAuth,
+    requireRole("ISSUER", "ADMIN"),
+    getIssuerProductsHandler
+);
+passportRouter.get("/by-product/:productId", getPassportByProductIdHandler);
+passportRouter.get("/:passportObjectAddr", getPassportHandler);
