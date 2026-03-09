@@ -13,6 +13,13 @@ type MintedEvent = {
   data?: {
     issuer?: string;
     owner?: string;
+    passport?: string;
+  };
+};
+
+type ObjectCoreResource = {
+  data?: {
+    owner?: string;
   };
 };
 
@@ -104,6 +111,24 @@ async function fetchTransactionByVersion(version: string): Promise<AptosUserTran
   return (await response.json()) as AptosUserTransaction;
 }
 
+async function fetchCurrentObjectOwner(objectAddress: string): Promise<string | null> {
+  const response = await fetch(
+    `${FULLNODE_URL}/accounts/${normalizeAddress(objectAddress)}/resource/0x1::object::ObjectCore`
+  );
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const resource = (await response.json()) as ObjectCoreResource;
+  const owner = resource.data?.owner;
+  if (!owner) {
+    return null;
+  }
+
+  return normalizeAddress(String(owner));
+}
+
 export async function getOwnedPassports(
   ownerAddress: string,
   limit = 200
@@ -132,19 +157,46 @@ export async function getOwnedPassports(
   }
 
   const allEvents = (await eventsResponse.json()) as MintedEvent[];
-  const ownerEvents = allEvents.filter(
-    (event) => normalizeAddress(String(event.data?.owner ?? "")) === normalizedOwner
+
+  const ownershipChecks = await Promise.all(
+    allEvents.map(async (event) => {
+      const passportObjectAddr = String(event.data?.passport ?? "").trim();
+      if (!passportObjectAddr) {
+        return null;
+      }
+
+      const currentOwner = await fetchCurrentObjectOwner(passportObjectAddr);
+      if (!currentOwner || currentOwner !== normalizedOwner) {
+        return null;
+      }
+
+      return {
+        event,
+        currentOwner,
+      };
+    })
   );
 
-  const txVersions = ownerEvents
-    .map((event) => String(event.version ?? event.transaction_version ?? "").trim())
+  const matchedOwnership = ownershipChecks.filter(
+    (entry): entry is { event: MintedEvent; currentOwner: string } => entry !== null
+  );
+
+  const txVersions = matchedOwnership
+    .map(({ event }) => String(event.version ?? event.transaction_version ?? "").trim())
     .filter((version) => version.length > 0);
 
   const txs = await Promise.all(txVersions.map((version) => fetchTransactionByVersion(version)));
 
   const products: IssuerProduct[] = [];
 
-  for (const tx of txs) {
+  for (let i = 0; i < txs.length; i += 1) {
+    const tx = txs[i];
+    const matched = matchedOwnership[i];
+
+    if (!matched) {
+      continue;
+    }
+
     if (!tx || !tx.success || tx.type !== "user_transaction") {
       continue;
     }
@@ -161,7 +213,7 @@ export async function getOwnedPassports(
 
     const [
       registryAddressArg,
-      ownerAddressArg,
+      _ownerAddressArg,
       serialPlainArg,
       metadataUriArg,
       _metadataBytesArg,
@@ -173,7 +225,8 @@ export async function getOwnedPassports(
       transactionHash: tx.hash,
       issuerAddress: normalizeAddress(String(tx.sender ?? "")),
       registryAddress: normalizeAddress(String(registryAddressArg)),
-      ownerAddress: normalizeAddress(String(ownerAddressArg)),
+      // ownerAddress reflects current on-chain owner, not mint-time owner.
+      ownerAddress: matched.currentOwner,
       serialNumber: bytesLikeToString(serialPlainArg),
       metadataUri: String(metadataUriArg),
       transferable: parseBoolean(transferableArg),
