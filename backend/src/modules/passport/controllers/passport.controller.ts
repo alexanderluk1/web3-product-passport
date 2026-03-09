@@ -134,3 +134,26 @@ export async function getIssuerProductsHandler(req: Request, res: Response) {
     });
   }
 }
+
+export async function getOwnedPassportsHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const result = await passportService.getOwnedPassports(req.user.walletAddress);
+
+    return res.status(200).json(result);
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to retrieve owned passports.",
+    });
+  }
+}

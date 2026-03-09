@@ -1,4 +1,5 @@
 import {
+  GetOwnedPassportsResponse,
   GetProductByIdResponse,
   GetIssuerProductsResponse,
   PassportMetadata,
@@ -19,6 +20,7 @@ import {
   resolvePassportObjAddrByProductId,
 } from "../../../chains/luxpass/readers";
 import { getIssuerMintedProducts } from "../../../chains/luxpass/readers/getIssuerMintedProducts";
+import { getOwnedPassports as getOwnedPassportsFromChain } from "../../../chains/luxpass/readers/getOwnedPassports";
 import { REGISTRY_ADDRESS } from "../../../chains/luxpass/constants";
 import { initRegistry as writeInitRegistry } from "../../../chains/luxpass/writers/initRegistry";
 import {
@@ -312,6 +314,18 @@ export const passportService = {
       source: "chain",
       syncedAt: saved.syncedAt,
       products: saved.products,
+    };
+  },
+
+  async getOwnedPassports(ownerWalletAddress: string): Promise<GetOwnedPassportsResponse> {
+    validateWalletAddress(ownerWalletAddress, "owner wallet address");
+    const normalizedOwnerAddress = normalizeAddress(ownerWalletAddress);
+    const products = await getOwnedPassportsFromChain(normalizedOwnerAddress);
+
+    return {
+      source: "chain",
+      syncedAt: Date.now(),
+      products,
     };
   },
 

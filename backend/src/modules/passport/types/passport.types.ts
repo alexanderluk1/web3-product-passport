@@ -67,6 +67,12 @@ export type GetIssuerProductsResponse = {
   products: IssuerProduct[];
 };
 
+export type GetOwnedPassportsResponse = {
+  source: "chain";
+  syncedAt: number;
+  products: IssuerProduct[];
+};
+
 export type IssuerProductCacheEntry = {
   syncedAt: number;
   products: IssuerProduct[];

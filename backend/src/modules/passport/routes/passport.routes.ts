@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { createRequire } from "node:module";
 import {
+  getOwnedPassportsHandler,
   getIssuerProductsHandler,
   getPassportByProductIdHandler,
   getPassportHandler,
@@ -30,6 +31,10 @@ passportRouter.get("/products",
     requireAuth,
     requireRole("ISSUER", "ADMIN"),
     getIssuerProductsHandler
+);
+passportRouter.get("/owned",
+    requireAuth,
+    getOwnedPassportsHandler
 );
 passportRouter.get("/by-product/:productId", getPassportByProductIdHandler);
 passportRouter.get("/:passportObjectAddr", getPassportHandler);
