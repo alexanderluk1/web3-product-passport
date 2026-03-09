@@ -10,6 +10,7 @@ import { generateChallenge } from "../challenge/generateChallenge";
 import { verifyChallenge } from "../challenge/verifyChallenge";
 import { verifySignature } from "../signature/verifySignature";
 import { issueToken } from "../token/issueToken";
+import { hasActiveIssuer } from "../../issuerRegistry/stores/issuerStore";
 
 const userStore = new Map<string, AuthUser>();
 
@@ -39,6 +40,10 @@ function determineRole(walletAddress: string): UserRole {
     return "ADMIN";
   }
 
+  if (hasActiveIssuer(normalizedWalletAddress)) {
+    return "ISSUER";
+  }
+
   return "USER";
 }
 
@@ -47,6 +52,7 @@ function findOrCreateUser(walletAddress: string): AuthUser {
   const existingUser = userStore.get(normalizedWalletAddress);
 
   if (existingUser) {
+    existingUser.role = determineRole(normalizedWalletAddress);
     existingUser.lastLoginAt = Date.now();
     userStore.set(normalizedWalletAddress, existingUser);
     return existingUser;
