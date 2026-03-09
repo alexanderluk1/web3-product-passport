@@ -1,6 +1,7 @@
 import { Account, Ed25519PrivateKey } from "@aptos-labs/ts-sdk";
 import { makeAptosClient } from "../../../config/aptos";
 import { getRegistryStatus } from "../../../chains/luxpass/readers/getRegistryStatus";
+import { initRegistry as writeInitRegistry } from "../../../chains/luxpass/writers/initRegistry";
 import { registerIssuer as writeRegisterIssuer } from "../../../chains/luxpass/writers/registerIssuer";
 import {
   GetAllIssuersResponse,
@@ -83,10 +84,16 @@ export const issuerRegistryService = {
     const registryStatus = await getRegistryStatus(aptos, normalizedAdminWallet);
 
     if (!registryStatus.initialized) {
-      return {
-        success: false,
-        error: "Registry is not initialized.",
-      };
+      const initResult = await writeInitRegistry(aptos);
+
+      if (!initResult.success) {
+        return {
+          success: false,
+          error: "Failed to initialize registry/passport infrastructure.",
+          transactionHash: initResult.transactionHash,
+          vmStatus: initResult.vmStatus,
+        };
+      }
     }
 
     const result = await writeRegisterIssuer(aptos, normalizedIssuerAddress);

@@ -20,14 +20,73 @@ import {
 } from "../../../utils/pinataHelper"
 
 import { makeAptosClient } from "../../../config/aptos";
-import { getPassport } from "../../../chains/luxpass/readers";
+import {
+  getPassport,
+  resolvePassportObjAddrByProductId,
+} from "../../../chains/luxpass/readers";
 import { REGISTRY_ADDRESS } from "../../../chains/luxpass/constants";
+import { initRegistry as writeInitRegistry } from "../../../chains/luxpass/writers/initRegistry";
 
 const aptos = makeAptosClient();
 
 const MODULE_ADDRESS = process.env.MODULE_ADDRESS!;
 const PASSPORT_MODULE_NAME = "passport";
 const PASSPORT_MINT_FUNCTION = "mint";
+const PASSPORT_INIT_PROBE_PRODUCT_ID = "__luxpass_passport_init_probe__";
+
+function hasMoveAbortCode(error: unknown, code: number): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return (
+    message.includes(`abort code: ${code}`) ||
+    message.includes(`abort_code: ${code}`) ||
+    message.includes(`code ${code}`)
+  );
+}
+
+function isIndexNotInitializedError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return message.includes("e_index_not_initialized") || hasMoveAbortCode(error, 3);
+}
+
+function isProductNotFoundError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return message.includes("e_product_not_found") || hasMoveAbortCode(error, 21);
+}
+
+async function ensurePassportInfrastructureInitialized(): Promise<void> {
+  try {
+    await resolvePassportObjAddrByProductId(aptos, PASSPORT_INIT_PROBE_PRODUCT_ID);
+    return;
+  } catch (error) {
+    if (isProductNotFoundError(error)) {
+      // Passport index exists; probe ID just doesn't exist.
+      return;
+    }
+
+    if (!isIndexNotInitializedError(error)) {
+      throw error;
+    }
+  }
+
+  const initResult = await writeInitRegistry(aptos);
+  if (!initResult.success) {
+    throw new Error(
+      `Failed to initialize passport infrastructure. ${initResult.vmStatus ?? ""}`.trim()
+    );
+  }
+}
 
 function buildPassportMetadata(params: {
   productName: string;
@@ -142,6 +201,9 @@ export const passportService = {
     const normalizedRegistryAddress = normalizeAddress(REGISTRY_ADDRESS);
     const serialPlainBytes = Array.from(Buffer.from(serialNumber, "utf8"));
     const transferable = typeof body.transferable === "boolean" ? body.transferable : false;
+
+    // Ensure one-time on-chain passport resources exist before mint payload is used.
+    await ensurePassportInfrastructureInitialized();
 
     // TODO:
     // 1. Check req.user is actually an approved issuer on-chain

@@ -35,21 +35,12 @@ export const adminRegistryService = {
   },
 
   async initRegistry(): Promise<InitRegistryResponse> {
-    const currentStatus = await readRegistryStatus(aptos, REGISTRY_ADDRESS);
-
-    if (currentStatus.initialized) {
-      return {
-        success: false,
-        error: "Registry is already initialized."
-      }
-    }
-
     const result = await writeInitRegistry(aptos);
 
     if (!result.success) {
       return {
         success: false,
-        error: "Failed to initialize registry.",
+        error: "Failed to initialize registry/passport infrastructure.",
         transactionHash: result.transactionHash,
         vmStatus: result.vmStatus
       };

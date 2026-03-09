@@ -3,6 +3,33 @@ import { passportService } from "../services/passport.service";
 import { resolvePassportObjAddrByProductId } from "../../../chains/luxpass/readers";
 import { PrepareMintPassportRequestBody } from "../types/passport.types";
 
+function normalizeByteVectorLike(value: unknown): unknown {
+  if (ArrayBuffer.isView(value)) {
+    return Array.from(value as ArrayLike<number>);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeByteVectorLike(item));
+  }
+
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    const isNumericKeyMap =
+      entries.length > 0 &&
+      entries.every(
+        ([key, entryValue]) => /^\d+$/.test(key) && typeof entryValue === "number"
+      );
+
+    if (isNumericKeyMap) {
+      return entries
+        .sort((a, b) => Number(a[0]) - Number(b[0]))
+        .map(([, entryValue]) => Number(entryValue));
+    }
+  }
+
+  return value;
+}
+
 export async function prepareMintPassportHandler(req: Request, res: Response) {
   try {
     if (!req.user) {
@@ -21,11 +48,23 @@ export async function prepareMintPassportHandler(req: Request, res: Response) {
     if (!result.success) {
       return res.status(400).json(result);
     }
-    return res.status(200).json(result);
+
+    const normalizedPayload = {
+      ...result.payload,
+      functionArguments: result.payload.functionArguments.map((arg) =>
+        normalizeByteVectorLike(arg)
+      ),
+    };
+
+    return res.status(200).json({
+      ...result,
+      payload: normalizedPayload,
+    });
   } catch (error) {
+    console.error("[passport] prepare mint failed:", error);
     return res.status(400).json({
       success: false,
-    error: error instanceof Error ? error.message : "Failed to prepare mint passport payload"
+      error: error instanceof Error ? error.message : "Failed to prepare mint passport payload",
     })
   };
 }
