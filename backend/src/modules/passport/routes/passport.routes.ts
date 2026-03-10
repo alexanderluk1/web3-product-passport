@@ -2,6 +2,7 @@ import { Router } from "express";
 import { createRequire } from "node:module";
 import {
   getOwnedPassportsHandler,
+  getPassportProvenanceByProductIdHandler,
   getIssuerProductsHandler,
   getPassportByProductIdHandler,
   getPassportHandler,
@@ -46,5 +47,6 @@ passportRouter.get("/owned",
     requireAuth,
     getOwnedPassportsHandler
 );
+passportRouter.get("/by-product/:productId/provenance", getPassportProvenanceByProductIdHandler);
 passportRouter.get("/by-product/:productId", getPassportByProductIdHandler);
 passportRouter.get("/:passportObjectAddr", getPassportHandler);

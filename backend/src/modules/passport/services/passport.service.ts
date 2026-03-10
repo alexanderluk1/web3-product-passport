@@ -1,7 +1,9 @@
 import {
+  GetPassportProvenanceResponse,
   GetOwnedPassportsResponse,
   GetProductByIdResponse,
   GetIssuerProductsResponse,
+  PassportProvenanceEvent,
   PassportMetadata,
   PrepareMintPassportRequestBody,
   PrepareMintPassportResponse,
@@ -44,6 +46,33 @@ const PASSPORT_MODULE_NAME = "passport";
 const PASSPORT_MINT_FUNCTION = "mint";
 const PASSPORT_INIT_PROBE_PRODUCT_ID = "__luxpass_passport_init_probe__";
 const PRODUCT_CACHE_TTL_MS = 60 * 1000;
+
+type MintedEventRecord = {
+  version?: string;
+  transaction_version?: string;
+  data?: {
+    issuer?: string;
+    owner?: string;
+    passport?: string;
+  };
+};
+
+type TransferEventRecord = {
+  version?: string;
+  transaction_version?: string;
+  data?: {
+    from?: string;
+    to?: string;
+    passport?: string;
+    object?: string;
+  };
+};
+
+type TxMeta = {
+  hash?: string;
+  sender?: string;
+  timestampMs?: number;
+};
 
 function hasMoveAbortCode(error: unknown, code: number): boolean {
   if (!(error instanceof Error)) {
@@ -211,6 +240,53 @@ function parseTransferable(value: unknown): boolean {
   return true;
 }
 
+function toEpochMs(timestamp?: string): number | undefined {
+  if (!timestamp) {
+    return undefined;
+  }
+
+  const numeric = Number(timestamp);
+  if (!Number.isFinite(numeric)) {
+    return undefined;
+  }
+
+  if (numeric >= 1e18) {
+    return Math.floor(numeric / 1_000_000);
+  }
+  if (numeric >= 1e15) {
+    return Math.floor(numeric / 1_000);
+  }
+  if (numeric < 1e12) {
+    return Math.floor(numeric * 1_000);
+  }
+
+  return Math.floor(numeric);
+}
+
+function getEventVersion(event: { version?: string; transaction_version?: string }): string {
+  return String(event.version ?? event.transaction_version ?? "").trim();
+}
+
+async function fetchTxMetaByVersion(version: string): Promise<TxMeta> {
+  const response = await fetch(`${FULLNODE_URL}/transactions/by_version/${version}`);
+
+  if (!response.ok) {
+    return {};
+  }
+
+  const tx = (await response.json()) as {
+    hash?: string;
+    sender?: string;
+    timestamp?: string;
+  };
+
+  return {
+    hash: tx.hash,
+    sender: tx.sender,
+    timestampMs: toEpochMs(tx.timestamp),
+  };
+}
+
 function decodeProductIdInput(productId: string): string {
   const normalized = validateRequiredString(productId, "productId");
 
@@ -367,7 +443,16 @@ export const passportService = {
     const normalizedCaller = normalizeAddress(callerWalletAddress);
     const normalizedRegistry = normalizeAddress(REGISTRY_ADDRESS);
 
-    const passport = await getPassport(aptos, normalizedPassportAddr);
+    let passport: Awaited<ReturnType<typeof getPassport>>;
+    try {
+      passport = await getPassport(aptos, normalizedPassportAddr);
+    } catch {
+      return {
+        success: false,
+        error:
+          "Invalid passportObjectAddress. Use the passport object's address (products[].passportObjectAddr), not a transaction hash.",
+      };
+    }
 
     if (!passport.transferable) {
       return { success: false, error: "This passport is not transferable." };
@@ -432,6 +517,145 @@ export const passportService = {
     }
 
     return { success: true, message: "Transfer recorded successfully." };
+  },
+
+  async getProductProvenance(productId: string): Promise<GetPassportProvenanceResponse> {
+    const productIdPlain = decodeProductIdInput(productId);
+    const productIdHex = toUtf8Hex(productIdPlain);
+    const passportObjectAddr = normalizeAddress(
+      await resolvePassportObjAddrByProductId(aptos, productIdPlain)
+    );
+
+    const mintedEventsResponse = await fetch(
+      `${FULLNODE_URL}/accounts/${normalizeAddress(
+        REGISTRY_ADDRESS
+      )}/events/${MODULE_ADDRESS}::passport::PassportEvents/minted?limit=1000`
+    );
+
+    if (!mintedEventsResponse.ok) {
+      throw new Error(
+        `Failed to fetch mint events from Aptos: ${mintedEventsResponse.status}`
+      );
+    }
+
+    const mintedEvents = (await mintedEventsResponse.json()) as MintedEventRecord[];
+    const matchedMintEvent = mintedEvents.find(
+      (event) =>
+        normalizeAddress(String(event.data?.passport ?? "")) === passportObjectAddr
+    );
+
+    const transferEventsResponse = await fetch(
+      `${FULLNODE_URL}/accounts/${normalizeAddress(
+        REGISTRY_ADDRESS
+      )}/events/${MODULE_ADDRESS}::passport::PassportEvents/transferred?limit=1000`
+    );
+
+    let transferEvents: TransferEventRecord[] = [];
+    if (transferEventsResponse.ok) {
+      transferEvents = (await transferEventsResponse.json()) as TransferEventRecord[];
+    } else if (transferEventsResponse.status !== 404) {
+      throw new Error(
+        `Failed to fetch transfer events from Aptos: ${transferEventsResponse.status}`
+      );
+    }
+
+    const matchedTransferEvents = transferEvents.filter((event) => {
+      const passportFromEvent = normalizeAddress(
+        String(event.data?.passport ?? event.data?.object ?? "")
+      );
+      return passportFromEvent === passportObjectAddr;
+    });
+
+    const versions = new Set<string>();
+
+    if (matchedMintEvent) {
+      const mintVersion = getEventVersion(matchedMintEvent);
+      if (mintVersion) {
+        versions.add(mintVersion);
+      }
+    }
+
+    for (const event of matchedTransferEvents) {
+      const version = getEventVersion(event);
+      if (version) {
+        versions.add(version);
+      }
+    }
+
+    const txMetaByVersion = new Map<string, TxMeta>(
+      await Promise.all(
+        Array.from(versions).map(async (version): Promise<[string, TxMeta]> => {
+          return [version, await fetchTxMetaByVersion(version)];
+        })
+      )
+    );
+
+    const events: PassportProvenanceEvent[] = [];
+
+    if (matchedMintEvent) {
+      const transactionVersion = getEventVersion(matchedMintEvent);
+
+      if (transactionVersion) {
+        const txMeta = txMetaByVersion.get(transactionVersion);
+        const mintedTo = matchedMintEvent.data?.owner
+          ? normalizeAddress(String(matchedMintEvent.data.owner))
+          : undefined;
+        const mintedBy = matchedMintEvent.data?.issuer
+          ? normalizeAddress(String(matchedMintEvent.data.issuer))
+          : txMeta?.sender
+          ? normalizeAddress(txMeta.sender)
+          : undefined;
+
+        events.push({
+          type: "MINTED",
+          passportObjectAddr,
+          toAddress: mintedTo,
+          actorAddress: mintedBy,
+          transactionVersion,
+          transactionHash: txMeta?.hash,
+          at: txMeta?.timestampMs,
+        });
+      }
+    }
+
+    for (const transferEvent of matchedTransferEvents) {
+      const transactionVersion = getEventVersion(transferEvent);
+      if (!transactionVersion) {
+        continue;
+      }
+
+      const txMeta = txMetaByVersion.get(transactionVersion);
+      const fromAddress = transferEvent.data?.from
+        ? normalizeAddress(String(transferEvent.data.from))
+        : undefined;
+      const toAddress = transferEvent.data?.to
+        ? normalizeAddress(String(transferEvent.data.to))
+        : undefined;
+
+      events.push({
+        type: "TRANSFERRED",
+        passportObjectAddr,
+        fromAddress,
+        toAddress,
+        actorAddress: txMeta?.sender ? normalizeAddress(txMeta.sender) : undefined,
+        transactionVersion,
+        transactionHash: txMeta?.hash,
+        at: txMeta?.timestampMs,
+      });
+    }
+
+    events.sort((a, b) => {
+      const av = BigInt(a.transactionVersion);
+      const bv = BigInt(b.transactionVersion);
+      return av < bv ? -1 : av > bv ? 1 : 0;
+    });
+
+    return {
+      passportObjectAddr,
+      serialNumber: productIdHex,
+      serialNumberPlain: productIdPlain,
+      events,
+    };
   },
 
   async getProductById(productId: string): Promise<GetProductByIdResponse> {

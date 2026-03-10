@@ -86,6 +86,7 @@ export type RecordTransferResponse =
     };
 
 export type IssuerProduct = {
+  passportObjectAddr?: string;
   transactionVersion: string;
   transactionHash: string;
   issuerAddress: string;
@@ -127,4 +128,24 @@ export type GetProductByIdResponse = {
   transactionVersion?: string;
   mintedAt?: number;
   status: number;
+};
+
+export type PassportProvenanceEventType = "MINTED" | "TRANSFERRED";
+
+export type PassportProvenanceEvent = {
+  type: PassportProvenanceEventType;
+  passportObjectAddr: string;
+  fromAddress?: string;
+  toAddress?: string;
+  actorAddress?: string;
+  transactionVersion: string;
+  transactionHash?: string;
+  at?: number;
+};
+
+export type GetPassportProvenanceResponse = {
+  passportObjectAddr: string;
+  serialNumber: string;
+  serialNumberPlain: string;
+  events: PassportProvenanceEvent[];
 };

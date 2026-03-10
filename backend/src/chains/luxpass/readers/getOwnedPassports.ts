@@ -221,6 +221,7 @@ export async function getOwnedPassports(
     ] = args;
 
     products.push({
+      passportObjectAddr: normalizeAddress(String(matched.event.data?.passport ?? "")),
       transactionVersion: tx.version,
       transactionHash: tx.hash,
       issuerAddress: normalizeAddress(String(tx.sender ?? "")),

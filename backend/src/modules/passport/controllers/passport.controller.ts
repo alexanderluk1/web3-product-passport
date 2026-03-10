@@ -193,6 +193,36 @@ export async function getPassportByProductIdHandler(
   }
 }
 
+export async function getPassportProvenanceByProductIdHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const productId = req.params.productId;
+    const provenance = await passportService.getProductProvenance(productId);
+    return res.status(200).json({ ok: true, provenance });
+  } catch (e) {
+    if (e instanceof Error) {
+      const message = e.message.toLowerCase();
+      const isNotFound =
+        message.includes("e_product_not_found") ||
+        message.includes("product_not_found") ||
+        message.includes("abort code: 21") ||
+        message.includes("abort_code: 21");
+
+      if (isNotFound) {
+        return res.status(404).json({
+          ok: false,
+          error: "Product not found.",
+        });
+      }
+    }
+
+    return next(e);
+  }
+}
+
 export async function getIssuerProductsHandler(req: Request, res: Response) {
   try {
     if (!req.user) {
