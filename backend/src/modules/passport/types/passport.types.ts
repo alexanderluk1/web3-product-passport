@@ -49,6 +49,42 @@ export type PrepareMintPassportResponse =
         error: string;
     }
 
+export type PrepareTransferRequestBody = {
+  passportObjectAddress: string;
+  newOwnerAddress: string;
+};
+
+export type PreparedTransferPayload = {
+  function: string;
+  functionArguments: string[];
+};
+
+export type PrepareTransferResponse =
+  | {
+      success: true;
+      payload: PreparedTransferPayload;
+    }
+  | {
+      success: false;
+      error: string;
+    };
+
+export type RecordTransferRequestBody = {
+  txHash: string;
+  passportObjectAddress: string;
+  newOwnerAddress: string;
+};
+
+export type RecordTransferResponse =
+  | {
+      success: true;
+      message: string;
+    }
+  | {
+      success: false;
+      error: string;
+    };
+
 export type IssuerProduct = {
   transactionVersion: string;
   transactionHash: string;
