@@ -1,6 +1,10 @@
 import type { NextFunction, Request, Response } from "express";
 import { passportService } from "../services/passport.service";
-import type { PrepareMintPassportRequestBody } from "../types/passport.types";
+import type {
+  PrepareMintPassportRequestBody,
+  PrepareTransferRequestBody,
+  RecordTransferRequestBody,
+} from "../types/passport.types";
 
 function normalizeByteVectorLike(value: unknown): unknown {
   if (ArrayBuffer.isView(value)) {
@@ -67,6 +71,83 @@ export async function prepareMintPassportHandler(req: Request, res: Response) {
         error instanceof Error
           ? error.message
           : "Failed to prepare mint passport payload",
+    });
+  }
+}
+
+export async function prepareTransferPassportHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const body = req.body as PrepareTransferRequestBody;
+
+    if (!body.passportObjectAddress || !body.newOwnerAddress) {
+      return res.status(400).json({
+        success: false,
+        error: "passportObjectAddress and newOwnerAddress are required.",
+      });
+    }
+
+    const result = await passportService.prepareTransferPassport({
+      callerWalletAddress: req.user.walletAddress,
+      body,
+    });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] prepare transfer failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to prepare transfer payload.",
+    });
+  }
+}
+
+export async function recordTransferPassportHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const body = req.body as RecordTransferRequestBody;
+
+    if (!body.txHash || !body.passportObjectAddress || !body.newOwnerAddress) {
+      return res.status(400).json({
+        success: false,
+        error: "txHash, passportObjectAddress, and newOwnerAddress are required.",
+      });
+    }
+
+    const result = await passportService.recordTransferPassport({ body });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] record transfer failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to record transfer.",
     });
   }
 }

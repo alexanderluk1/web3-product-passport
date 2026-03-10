@@ -6,6 +6,11 @@ import {
   PrepareMintPassportRequestBody,
   PrepareMintPassportResponse,
   PreparedMintPayload,
+  PrepareTransferRequestBody,
+  PrepareTransferResponse,
+  PreparedTransferPayload,
+  RecordTransferRequestBody,
+  RecordTransferResponse,
 } from "../types/passport.types";
 import { normalizeAddress, validateWalletAddress } from "../../../utils/walletHelper";
 import {
@@ -17,18 +22,22 @@ import { uploadImageToPinata, uploadMetadataToPinata } from "../../../utils/pina
 import { makeAptosClient } from "../../../config/aptos";
 import {
   getPassport,
+  getPassportOwner,
   resolvePassportObjAddrByProductId,
 } from "../../../chains/luxpass/readers";
 import { getIssuerMintedProducts } from "../../../chains/luxpass/readers/getIssuerMintedProducts";
 import { getOwnedPassports as getOwnedPassportsFromChain } from "../../../chains/luxpass/readers/getOwnedPassports";
-import { REGISTRY_ADDRESS } from "../../../chains/luxpass/constants";
+import { REGISTRY_ADDRESS, PASSPORT_TRANSFER_FN } from "../../../chains/luxpass/constants";
 import { initRegistry as writeInitRegistry } from "../../../chains/luxpass/writers/initRegistry";
 import {
   getIssuerProductsFromStore,
   saveIssuerProductsToStore,
+  clearIssuerProductsFromStore,
 } from "../store/productStore";
 
 const aptos = makeAptosClient();
+const FULLNODE_URL =
+  process.env.APTOS_FULLNODE_URL || "https://fullnode.devnet.aptoslabs.com/v1";
 
 const MODULE_ADDRESS = process.env.MODULE_ADDRESS!;
 const PASSPORT_MODULE_NAME = "passport";
@@ -160,6 +169,21 @@ function buildMintPayload(params: {
       metadataIpfsUri,
       metadataBytes,
       transferable,
+    ],
+  };
+}
+
+function buildTransferPayload(params: {
+  passportObjectAddress: string;
+  newOwnerAddress: string;
+  registryAddress: string;
+}): PreparedTransferPayload {
+  return {
+    function: PASSPORT_TRANSFER_FN,
+    functionArguments: [
+      params.passportObjectAddress,
+      params.newOwnerAddress,
+      params.registryAddress,
     ],
   };
 }
@@ -327,6 +351,87 @@ export const passportService = {
       syncedAt: Date.now(),
       products,
     };
+  },
+
+  async prepareTransferPassport(params: {
+    callerWalletAddress: string;
+    body: PrepareTransferRequestBody;
+  }): Promise<PrepareTransferResponse> {
+    const { callerWalletAddress, body } = params;
+
+    validateWalletAddress(body.passportObjectAddress, "passport object address");
+    validateWalletAddress(body.newOwnerAddress, "new owner address");
+
+    const normalizedPassportAddr = normalizeAddress(body.passportObjectAddress);
+    const normalizedNewOwner = normalizeAddress(body.newOwnerAddress);
+    const normalizedCaller = normalizeAddress(callerWalletAddress);
+    const normalizedRegistry = normalizeAddress(REGISTRY_ADDRESS);
+
+    const passport = await getPassport(aptos, normalizedPassportAddr);
+
+    if (!passport.transferable) {
+      return { success: false, error: "This passport is not transferable." };
+    }
+
+    const onChainOwner = await getPassportOwner(normalizedPassportAddr);
+    if (normalizeAddress(onChainOwner) !== normalizedCaller) {
+      return { success: false, error: "You are not the owner of this passport." };
+    }
+
+    const payload = buildTransferPayload({
+      passportObjectAddress: normalizedPassportAddr,
+      newOwnerAddress: normalizedNewOwner,
+      registryAddress: normalizedRegistry,
+    });
+
+    return { success: true, payload };
+  },
+
+  async recordTransferPassport(params: {
+    body: RecordTransferRequestBody;
+  }): Promise<RecordTransferResponse> {
+    const { body } = params;
+
+    if (!body.txHash || typeof body.txHash !== "string" || !body.txHash.startsWith("0x")) {
+      return { success: false, error: "Invalid transaction hash." };
+    }
+
+    const response = await fetch(
+      `${FULLNODE_URL}/transactions/by_hash/${body.txHash}`
+    );
+
+    if (!response.ok) {
+      return { success: false, error: "Transaction not found on chain." };
+    }
+
+    const tx = (await response.json()) as {
+      type: string;
+      success: boolean;
+      payload?: { function?: string };
+    };
+
+    if (tx.type !== "user_transaction") {
+      return { success: false, error: "Transaction is not a user transaction." };
+    }
+
+    if (!tx.success) {
+      return { success: false, error: "Transaction did not succeed on chain." };
+    }
+
+    const fnName = tx.payload?.function?.toLowerCase() ?? "";
+    if (fnName !== PASSPORT_TRANSFER_FN.toLowerCase()) {
+      return { success: false, error: "Transaction is not a transfer transaction." };
+    }
+
+    // Invalidate issuer product cache (best-effort)
+    try {
+      const passport = await getPassport(aptos, normalizeAddress(body.passportObjectAddress));
+      clearIssuerProductsFromStore(passport.issuer);
+    } catch {
+      // best-effort
+    }
+
+    return { success: true, message: "Transfer recorded successfully." };
   },
 
   async getProductById(productId: string): Promise<GetProductByIdResponse> {

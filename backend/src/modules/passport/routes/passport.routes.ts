@@ -6,6 +6,8 @@ import {
   getPassportByProductIdHandler,
   getPassportHandler,
   prepareMintPassportHandler,
+  prepareTransferPassportHandler,
+  recordTransferPassportHandler,
 } from "../controllers/passport.controller";
 import { requireAuth } from "../../auth/middleware/requireAuth";
 import { requireRole } from "../../auth/middleware/requireRole";
@@ -26,6 +28,14 @@ passportRouter.post("/mint/prepare",
     requireRole("ISSUER", "ADMIN"),
     upload.single("image"),
     prepareMintPassportHandler
+);
+passportRouter.post("/transfer/prepare",
+    requireAuth,
+    prepareTransferPassportHandler
+);
+passportRouter.post("/transfer/record",
+    requireAuth,
+    recordTransferPassportHandler
 );
 passportRouter.get("/products",
     requireAuth,
