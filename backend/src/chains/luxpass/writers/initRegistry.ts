@@ -75,12 +75,18 @@ async function runInitCall(params: {
   vmStatus?: string;
 }> {
   const { aptos, adminAccount, moduleName, functionName } = params;
+  const functionId = `${MODULE_ADDRESS}::${moduleName}::${functionName}`;
 
   try {
+    console.info("[chain:initRegistry] building transaction", {
+      functionId,
+      sender: String(adminAccount.accountAddress),
+    });
+
     const transaction = await aptos.transaction.build.simple({
       sender: adminAccount.accountAddress,
       data: {
-        function: `${MODULE_ADDRESS}::${moduleName}::${functionName}`,
+        function: functionId,
         functionArguments: [],
       },
     });
@@ -89,9 +95,19 @@ async function runInitCall(params: {
       signer: adminAccount,
       transaction,
     });
+    console.info("[chain:initRegistry] transaction submitted", {
+      functionId,
+      transactionHash: committedTransaction.hash,
+    });
 
     const executedTransaction = await aptos.waitForTransaction({
       transactionHash: committedTransaction.hash,
+    });
+    console.info("[chain:initRegistry] transaction executed", {
+      functionId,
+      transactionHash: committedTransaction.hash,
+      success: executedTransaction.success,
+      vmStatus: executedTransaction.vm_status,
     });
 
     if (executedTransaction.success || isAlreadyInitializedVmStatus(executedTransaction.vm_status)) {
@@ -110,6 +126,12 @@ async function runInitCall(params: {
   } catch (error) {
     const vmStatus = extractVmStatus(error);
     const transactionHash = extractTransactionHash(error) ?? "";
+    console.error("[chain:initRegistry] transaction failed", {
+      functionId,
+      transactionHash,
+      vmStatus,
+      error,
+    });
 
     if (isAlreadyInitializedVmStatus(vmStatus)) {
       return {
@@ -129,12 +151,18 @@ async function runInitCall(params: {
 
 export async function initRegistry(aptos: Aptos): Promise<InitRegistryResult> {
   const adminAccount = getAdminAccount();
+  console.info("[chain:initRegistry] init sequence started", {
+    adminAddress: String(adminAccount.accountAddress),
+    moduleAddress: MODULE_ADDRESS,
+  });
+
   const initRegistryResult = await runInitCall({
     aptos,
     adminAccount,
     moduleName: ISSUER_REGISTRY_MODULE_NAME,
     functionName: ISSUER_REGISTRY_INIT_FUNCTION,
   });
+  console.info("[chain:initRegistry] issuer_registry init result", initRegistryResult);
 
   if (!initRegistryResult.success) {
     return {
@@ -150,6 +178,7 @@ export async function initRegistry(aptos: Aptos): Promise<InitRegistryResult> {
     moduleName: PASSPORT_MODULE_NAME,
     functionName: PASSPORT_INIT_INDEX_FUNCTION,
   });
+  console.info("[chain:initRegistry] passport init_index result", initPassportIndexResult);
 
   if (!initPassportIndexResult.success) {
     return {
@@ -165,6 +194,7 @@ export async function initRegistry(aptos: Aptos): Promise<InitRegistryResult> {
     moduleName: PASSPORT_MODULE_NAME,
     functionName: PASSPORT_INIT_EVENTS_FUNCTION,
   });
+  console.info("[chain:initRegistry] passport init_events result", initPassportEventsResult);
 
   if (!initPassportEventsResult.success) {
     return {

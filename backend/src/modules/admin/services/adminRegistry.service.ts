@@ -14,7 +14,18 @@ const aptos = makeAptosClient();
 
 export const adminRegistryService = {
   async getRegistryStatus(): Promise<RegistryStatusResponse> {
+    console.info("[admin-registry.service] reading registry status", {
+      network: process.env.APTOS_NETWORK || "devnet",
+      registryAddress: REGISTRY_ADDRESS,
+    });
     const result = await readRegistryStatus(aptos, REGISTRY_ADDRESS);
+    console.info("[admin-registry.service] read registry status result", {
+      initialized: result.initialized,
+      registryAddress: result.registryAddress,
+      adminAddress: result.initialized ? result.adminAddress : undefined,
+      issuerAddedCount: result.initialized ? result.issuerAddedCount : undefined,
+      issuerRemovedCount: result.initialized ? result.issuerRemovedCount : undefined,
+    });
 
     if (!result.initialized) {
       return {
@@ -35,9 +46,18 @@ export const adminRegistryService = {
   },
 
   async initRegistry(): Promise<InitRegistryResponse> {
+    console.info("[admin-registry.service] init registry started", {
+      network: process.env.APTOS_NETWORK || "devnet",
+      moduleAddress: process.env.MODULE_ADDRESS,
+      registryAddress: REGISTRY_ADDRESS,
+    });
     const result = await writeInitRegistry(aptos);
 
     if (!result.success) {
+      console.warn("[admin-registry.service] init registry failed", {
+        transactionHash: result.transactionHash,
+        vmStatus: result.vmStatus,
+      });
       return {
         success: false,
         error: "Failed to initialize registry/passport infrastructure.",
@@ -45,6 +65,12 @@ export const adminRegistryService = {
         vmStatus: result.vmStatus
       };
     }
+
+    console.info("[admin-registry.service] init registry succeeded", {
+      transactionHash: result.transactionHash,
+      vmStatus: result.vmStatus,
+      registryAddress: REGISTRY_ADDRESS.toLowerCase(),
+    });
 
     return {
       success: true,

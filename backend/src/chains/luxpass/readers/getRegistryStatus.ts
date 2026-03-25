@@ -32,6 +32,11 @@ export async function getRegistryStatus(
     functionArguments: [normalizedRegistryAddress],
   };
 
+  console.info("[chain:getRegistryStatus] aptos.view request", {
+    function: payload.function,
+    functionArguments: payload.functionArguments,
+  });
+
   try {
     const result = await aptos.view({ payload });
 
@@ -41,6 +46,13 @@ export async function getRegistryStatus(
       string | number
     ];
 
+    console.info("[chain:getRegistryStatus] aptos.view success", {
+      registryAddress: normalizedRegistryAddress,
+      adminAddress,
+      issuerAddedCount,
+      issuerRemovedCount,
+    });
+
     return {
       initialized: true,
       registryAddress: normalizedRegistryAddress,
@@ -49,7 +61,16 @@ export async function getRegistryStatus(
       issuerRemovedCount: Number(issuerRemovedCount),
     };
   } catch (error) {
-    if (isRegistryNotFoundError(error)) {
+    const registryNotFound = isRegistryNotFoundError(error);
+    console.error("[chain:getRegistryStatus] aptos.view failed", {
+      function: payload.function,
+      functionArguments: payload.functionArguments,
+      registryAddress: normalizedRegistryAddress,
+      registryNotFound,
+      error,
+    });
+
+    if (registryNotFound) {
       return {
         initialized: false,
         registryAddress: normalizedRegistryAddress,
