@@ -13,6 +13,20 @@ import {
   PreparedTransferPayload,
   RecordTransferRequestBody,
   RecordTransferResponse,
+  PrepareUpdateMetadataRequestBody,
+  PrepareSetStatusRequestBody,
+  PreparedSetStatusPayload,
+  PrepareSetStatusResponse,
+  RecordSetStatusRequestBody,
+  PreparedUpdateMetadataPayload,
+  PrepareUpdateMetadataResponse,
+  RecordUpdateMetadataRequestBody,
+  RecordUpdateMetadataResponse,
+  PreparedListPassportPayload,
+  PrepareListPassportRequestBody,
+  PrepareListPassportResponse,
+  RecordListPassportRequestBody,
+  RecordListPassportResponse,
 } from "../types/passport.types";
 import { normalizeAddress, validateWalletAddress } from "../../../utils/walletHelper";
 import {
@@ -29,7 +43,17 @@ import {
 } from "../../../chains/luxpass/readers";
 import { getIssuerMintedProducts } from "../../../chains/luxpass/readers/getIssuerMintedProducts";
 import { getOwnedPassports as getOwnedPassportsFromChain } from "../../../chains/luxpass/readers/getOwnedPassports";
-import { REGISTRY_ADDRESS, PASSPORT_TRANSFER_FN } from "../../../chains/luxpass/constants";
+//import { REGISTRY_ADDRESS, PASSPORT_TRANSFER_FN, PASSPORT_SET_STATUS_FN, PASSPORT_UPDATE_METADATA_FN } from "../../../chains/luxpass/constants";
+import {
+  REGISTRY_ADDRESS,
+  PASSPORT_SET_STATUS_FN,
+  PASSPORT_UPDATE_METADATA_FN,
+  PASSPORT_LIST_FN,
+  STATUS_ACTIVE,
+  STATUS_SUSPENDED,
+  STATUS_REVOKED,
+  STATUS_LISTING,
+} from "../../../chains/luxpass/constants";
 import { initRegistry as writeInitRegistry } from "../../../chains/luxpass/writers/initRegistry";
 import {
   getIssuerProductsFromStore,
@@ -215,6 +239,52 @@ function buildTransferPayload(params: {
       params.registryAddress,
     ],
   };
+}
+
+export function buildSetStatusPayload(params: {
+  passportObjectAddress: string;
+  newStatus: number;
+}): PreparedSetStatusPayload {
+  return {
+    function: PASSPORT_SET_STATUS_FN,
+    functionArguments: [
+      params.passportObjectAddress,
+      REGISTRY_ADDRESS,
+      params.newStatus,
+    ],
+  };
+}
+
+export function buildUpdateMetadataPayload(params: {
+  passportObjectAddress: string;
+  metadataIpfsUri: string;
+  metadataBytes: number[];
+}): PreparedUpdateMetadataPayload {
+  return {
+    function: PASSPORT_UPDATE_METADATA_FN,
+    functionArguments: [
+      params.passportObjectAddress,
+      REGISTRY_ADDRESS,
+      params.metadataIpfsUri,
+      params.metadataBytes,
+    ],
+  };
+}
+
+export function buildPassportListPayload(params: {
+  passportObjectAddress: string;
+}): PreparedListPassportPayload {
+  return {
+    function: PASSPORT_LIST_FN,
+    functionArguments: [
+      params.passportObjectAddress,
+      REGISTRY_ADDRESS,
+    ],
+  };
+}
+
+function isValidStatus(status: number): boolean {
+  return [STATUS_ACTIVE, STATUS_SUSPENDED, STATUS_REVOKED, STATUS_LISTING].includes(status);
 }
 
 function isCacheFresh(syncedAt: number): boolean {
@@ -698,3 +768,381 @@ export const passportService = {
     };
   },
 };
+
+export const passportListingService = {
+  // Builds the transaction payload and does validation for setting passport status, would then return it to frontend to sign
+  // Returns success = true/false, payload is passport address and new status if success, error message if false
+  async prepareSetStatus(params: {
+    callerWalletAddress: string;
+    callerRole: "ADMIN" | "ISSUER";
+    body: PrepareSetStatusRequestBody;
+  }): Promise<PrepareSetStatusResponse>{
+    const { callerWalletAddress, callerRole, body } = params;
+
+    validateWalletAddress(body.passportObjectAddress, "passport object address");
+
+    if (!isValidStatus(body.newStatus)) {
+      return { success: false, error: `Invalid status value: ${body.newStatus}.` };
+    }
+
+    const normalizedPassportAddr = normalizeAddress(body.passportObjectAddress);
+
+    let passport: Awaited<ReturnType<typeof getPassport>>;
+    try {
+      passport = await getPassport(aptos, normalizedPassportAddr);
+    } catch {
+      return {
+        success: false,
+        error: "Passport not found. Check the passport object address.",
+      };
+    }
+
+    // Check that caller is Admin if trying to set LISTING status
+    if (
+      (body.newStatus === STATUS_LISTING) &&
+      callerRole !== "ADMIN"
+    ) {
+      return {
+        success: false,
+        error: "Only Admin can set LISTING status.",
+      };
+    }
+
+    // Issuer blocked while passport is listed — Admin must cancel the listing status first
+    if (passport.status === STATUS_LISTING && callerRole !== "ADMIN") {
+      return {
+        success: false,
+        error: "Passport is currently listed. Admin must clear the listing before status can be changed.",
+      };
+    }
+
+    // Issuer can only act on passports they issued, same as on chain
+    if (callerRole === "ISSUER") {
+      if (normalizeAddress(passport.issuer) !== normalizeAddress(callerWalletAddress)) {
+        return {
+          success: false,
+          error: "You are not the issuer of this passport.",
+        };
+      }
+    }
+
+    const payload = buildSetStatusPayload({
+      passportObjectAddress: normalizedPassportAddr,
+      newStatus: body.newStatus,
+    });
+
+    return { success: true, payload };
+  }
+
+  // Used to verify that the transaction for set status was successful and then update any off-chain state in the website
+  async recordSetStatus(params: {
+    body: RecordSetStatusRequestBody;
+  }): Promise<RecordSetStatusResponse> {
+    const { body } = params;
+
+    if (!body.txHash || typeof body.txHash !== "string" || !body.txHash.startsWith("0x")) {
+      return { success: false, error: "Invalid transaction hash." };
+    }
+
+    validateWalletAddress(body.passportObjectAddress, "passport object address");
+
+    const response = await fetch(`${FULLNODE_URL}/transactions/by_hash/${body.txHash}`);
+
+    if (!response.ok) {
+      return { success: false, error: "Transaction not found on chain." };
+    }
+
+    const tx = (await response.json()) as {
+      type: string;
+      success: boolean;
+      payload?: { function?: string };
+    };
+
+    if (tx.type !== "user_transaction") {
+      return { success: false, error: "Transaction is not a user transaction." };
+    }
+
+    if (!tx.success) {
+      return { success: false, error: "Transaction did not succeed on chain." };
+    }
+
+    const fnName = tx.payload?.function?.toLowerCase() ?? "";
+    if (fnName !== PASSPORT_SET_STATUS_FN.toLowerCase()) {
+      return { success: false, error: "Transaction is not a set_status transaction." };
+    }
+
+    // Remove cached product data for user, to ensure updated status is reflected on frontend.
+    // Imaging something similar would result for admins as issuers
+    try {
+      const passport = await getPassport(aptos, normalizeAddress(body.passportObjectAddress));
+      // Placeholder will get back to this later for individual users
+      clearIssuerProductsFromStore(passport.issuer);
+    } catch {
+      // even if it fails cache would be cleared eventually, should log this somewhere though for debugging
+    }
+
+    return { success: true, message: "Status update recorded successfully." };
+  },
+
+  // Builds transaction payload and does validation for updating passport metadata (Only for Admin and Verifiers[Issuers for now])
+  // returns payload on success, error message on failure
+  async prepareUpdateMetadata(params: {
+    callerWalletAddress: string;
+    callerRole: "ADMIN" | "ISSUER";
+    body: PrepareUpdateMetadataRequestBody;
+    imageFile?: Express.Multer.File;
+  }): Promise<PrepareUpdateMetadataResponse> {
+    const { callerWalletAddress, callerRole, body, imageFile } = params;
+
+    validateWalletAddress(body.passportObjectAddress, "passport object address");
+
+    const normalizedPassportAddr = normalizeAddress(body.passportObjectAddress);
+
+    let passport: Awaited<ReturnType<typeof getPassport>>;
+    try {
+      passport = await getPassport(aptos, normalizedPassportAddr);
+    } catch {
+      return {
+        success: false,
+        error: "Passport not found. Check the passport object address.",
+      };
+    }
+
+    // Issuer can only update passports they issued
+    if (callerRole === "ISSUER") {
+      if (normalizeAddress(passport.issuer) !== normalizeAddress(callerWalletAddress)) {
+        return {
+          success: false,
+          error: "You are not the issuer of this passport.",
+        };
+      }
+    }
+
+    const productName = validateRequiredString(body.productName, "productName");
+    const brand = validateRequiredString(body.brand, "brand");
+    const category = validateRequiredString(body.category, "category");
+    const serialNumber = validateRequiredString(body.serialNumber, "serialNumber");
+    const manufacturingDate = validateRequiredString(body.manufacturingDate, "manufacturingDate");
+    const countryOfOrigin = validateRequiredString(body.countryOfOrigin, "countryOfOrigin");
+    const description = validateRequiredString(body.description, "description");
+    const materials = parseMaterials(body.materials);
+
+    if (materials.length === 0) {
+      throw new Error("At least one material is required.");
+    }
+
+    // If a new image is provided, upload it — otherwise reuse the existing metadata URI's image.
+    let imageIpfsUri: string;
+    if (imageFile) {
+      validateImageFile(imageFile);
+      const imageUpload = await uploadImageToPinata(imageFile);
+      imageIpfsUri = imageUpload.ipfsUri;
+    } else {
+      // Fetch existing metadata to reuse the image URI
+      try {
+        const existingMetadataResponse = await fetch(passport.metadataUri);
+        if (!existingMetadataResponse.ok) {
+          return {
+            success: false,
+            error: "No existing metadata could be found.",
+          };
+        }
+        const existingMetadata = (await existingMetadataResponse.json()) as { image?: string };
+        if (existingMetadata.image) {
+          imageIpfsUri = existingMetadata.image;
+        }
+      } catch {
+        return {
+          success: false,
+          error: "No image provided and existing metadata could not be fetched.",
+        };
+      }
+    }
+
+    const metadata = {
+      name: productName,
+      description,
+      image: imageIpfsUri,
+      brand,
+      category,
+      serialNumber,
+      manufacturingDate,
+      materials,
+      countryOfOrigin,
+      attributes: [
+        { trait_type: "Brand", value: brand },
+        { trait_type: "Category", value: category },
+        { trait_type: "Serial Number", value: serialNumber },
+        { trait_type: "Manufacturing Date", value: manufacturingDate },
+        { trait_type: "Country of Origin", value: countryOfOrigin },
+        { trait_type: "Materials", value: materials.join(", ") },
+      ],
+    };
+
+    const metadataUpload = await uploadMetadataToPinata(metadata);
+    const metadataJson = JSON.stringify(metadata, null, 2);
+    const metadataBytes = Array.from(Buffer.from(metadataJson, "utf8"));
+
+    const payload = buildUpdateMetadataPayload({
+      passportObjectAddress: normalizedPassportAddr,
+      metadataIpfsUri: metadataUpload.ipfsUri,
+      metadataBytes,
+    });
+
+    return {
+      success: true,
+      metadataIpfsUri: metadataUpload.ipfsUri,
+      payload,
+    };
+  },
+
+  // Used to verify that the transaction for update metadata was successful and then update any off-chain state in the website
+  async recordUpdateMetadata(params: {
+    body: RecordUpdateMetadataRequestBody;
+  }): Promise<RecordUpdateMetadataResponse> {
+    const { body } = params;
+
+    if (!body.txHash || typeof body.txHash !== "string" || !body.txHash.startsWith("0x")) {
+      return { success: false, error: "Invalid transaction hash." };
+    }
+
+    validateWalletAddress(body.passportObjectAddress, "passport object address");
+
+    const response = await fetch(`${FULLNODE_URL}/transactions/by_hash/${body.txHash}`);
+
+    if (!response.ok) {
+      return { success: false, error: "Transaction not found on chain." };
+    }
+
+    const tx = (await response.json()) as {
+      type: string;
+      success: boolean;
+      payload?: { function?: string };
+    };
+
+    if (tx.type !== "user_transaction") {
+      return { success: false, error: "Transaction is not a user transaction." };
+    }
+
+    if (!tx.success) {
+      return { success: false, error: "Transaction did not succeed on chain." };
+    }
+
+    const fnName = tx.payload?.function?.toLowerCase() ?? "";
+    if (fnName !== PASSPORT_UPDATE_METADATA_FN.toLowerCase()) {
+      return { success: false, error: "Transaction is not an update_metadata transaction." };
+    }
+
+    // Invalidate product cached to fetch latest metadata on next retrieval.
+    try {
+      const passport = await getPassport(aptos, normalizeAddress(body.passportObjectAddress));
+      clearIssuerProductsFromStore(passport.issuer);
+    } catch {
+      // best-effort — cache miss is not fatal
+    }
+
+    return { success: true, message: "Metadata update recorded successfully." };
+  },
+
+  async prepareListPassport(params: {
+    callerWalletAddress: string;
+    body: PrepareListPassportRequestBody;
+  }): Promise<PrepareListPassportResponse>{
+    const { callerWalletAddress, body } = params;
+
+    validateWalletAddress(body.passportObjectAddress, "passport object address");
+
+    const normalizedPassportAddr = normalizeAddress(body.passportObjectAddress);
+
+    let passport: Awaited<ReturnType<typeof getPassport>>;
+    try {
+      passport = await getPassport(aptos, normalizedPassportAddr);
+    } catch {
+      return {
+        success: false,
+        error: "Passport not found. Check the passport object address.",
+      };
+    }
+
+    if (!passport.transferable) {
+      return { success: false, error: "This passport is not transferable." };
+    }
+
+    const onChainOwner = await getPassportOwner(normalizedPassportAddr);
+    if (normalizeAddress(onChainOwner) !== normalizedCaller) {
+      return { success: false, error: "You are not the owner of this passport." };
+    }
+
+    const payload = buildPassportListPayload({
+      passportObjectAddress: normalizedPassportAddr,
+    });
+
+    return { success: true, payload };
+  }
+
+  // Used to verify that the transaction for list passport was successful and then update any off-chain state in the website
+  async recordListPassport(params: {
+    body: RecordListPassportRequestBody;
+  }): Promise<RecordListPassportResponse> {
+    const { body } = params;
+
+    if (!body.txHash || typeof body.txHash !== "string" || !body.txHash.startsWith("0x")) {
+      return { success: false, error: "Invalid transaction hash." };
+    }
+
+    validateWalletAddress(body.passportObjectAddress, "passport object address");
+
+    const response = await fetch(`${FULLNODE_URL}/transactions/by_hash/${body.txHash}`);
+
+    if (!response.ok) {
+      return { success: false, error: "Transaction not found on chain." };
+    }
+
+    const tx = (await response.json()) as {
+      type: string;
+      success: boolean;
+      payload?: { function?: string };
+    };
+
+    if (tx.type !== "user_transaction") {
+      return { success: false, error: "Transaction is not a user transaction." };
+    }
+
+    if (!tx.success) {
+      return { success: false, error: "Transaction did not succeed on chain." };
+    }
+
+    const fnName = tx.payload?.function?.toLowerCase() ?? "";
+    if (fnName !== PASSPORT_LIST_FN.toLowerCase()) {
+      return { success: false, error: "Transaction is not a list_passport transaction." };
+    }
+
+    // Remove cached product data for user, to ensure updated status is reflected on frontend.
+    // Imaging something similar would result for admins as issuers
+    try {
+      const passport = await getPassport(aptos, normalizeAddress(body.passportObjectAddress));
+      // Placeholder will get back to this later for individual users
+      clearIssuerProductsFromStore(passport.issuer);
+    } catch {
+      // even if it fails cache would be cleared eventually, should log this somewhere though for debugging
+    }
+
+    return { success: true, message: "Listing Passport recorded successfully." };
+  },
+
+};
+
+/*
+  To do Marketplace:
+    Add in service to allow admin to delist passport which would just be a set_status("active") transaction
+    Add in service to allow user to request admin to delist passport
+    Add in service to allow user to submit buyer address and get passport transferred to buyer
+    Add in service to allow buyer to submit their shipping address to admin
+    Add in service to allow buyer to notify that they have received product and have passport status restored to active
+    Think about adding in multiple on-chain status types:
+      Storing: after initial listing would be this status
+      Verifying: after admin receives the product from seller
+      Listing: after admin verifies product (mints new passport or verifies existing one)
+      Sold: after passport is transferred to buyer (status until buyer confirms receipt of product)
+      Active: passport returns to active status at end after buyer confirmation
+*/

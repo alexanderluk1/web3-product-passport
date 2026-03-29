@@ -1,9 +1,15 @@
 import type { NextFunction, Request, Response } from "express";
-import { passportService } from "../services/passport.service";
+import { passportService, passportListingService } from "../services/passport.service";
 import type {
   PrepareMintPassportRequestBody,
   PrepareTransferRequestBody,
   RecordTransferRequestBody,
+  PrepareSetStatusRequestBody,
+  RecordSetStatusRequestBody,
+  PrepareUpdateMetadataRequestBody,
+  RecordUpdateMetadataRequestBody,
+  PrepareListPassportRequestBody,
+  RecordListPassportRequestBody,
 } from "../types/passport.types";
 
 function normalizeByteVectorLike(value: unknown): unknown {
@@ -265,6 +271,232 @@ export async function getOwnedPassportsHandler(req: Request, res: Response) {
         error instanceof Error
           ? error.message
           : "Failed to retrieve owned passports.",
+    });
+  }
+}
+
+// Marketplace controllers
+export async function prepareSetStatusHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const body = req.body as PrepareSetStatusRequestBody;
+
+    if (!body.passportObjectAddress || !body.newStatus) {
+      return res.status(400).json({
+        success: false,
+        error: "passportObjectAddress and newStatus are required.",
+      });
+    }
+
+    const result = await passportListingService.prepareSetStatus({
+      callerWalletAddress: req.user.walletAddress,
+      body,
+    });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] prepare set status failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to prepare set status.",
+    });
+  }
+}
+
+export async function recordSetStatusHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const body = req.body as RecordSetStatusRequestBody;
+
+    if (!body.txHash || !body.passportObjectAddress) {
+      return res.status(400).json({
+        success: false,
+        error: "txHash and passportObjectAddress",
+      });
+    }
+
+    const result = await passportListingService.recordSetStatus({ body });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] record set status failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to record set status.",
+    });
+  }
+}
+
+export async function prepareUpdateMetadataHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const body = req.body as PrepareUpdateMetadataRequestBody;
+
+    const result = await passportListingService.prepareUpdateMetadata({
+      callerWalletAddress: req.user.walletAddress,
+      body,
+      imageFile: req.file,
+    });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] prepare update metadata failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to prepare update metadata status.",
+    });
+  }
+}
+
+export async function recordUpdateMetadataHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const body = req.body as RecordUpdateMetadataRequestBody;
+
+    if (!body.txHash || !body.passportObjectAddress) {
+      return res.status(400).json({
+        success: false,
+        error: "txHash and passportObjectAddress",
+      });
+    }
+
+    const result = await passportListingService.recordUpdateMetadata({ body });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] record update metadata failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to record update metadata.",
+    });
+  }
+}
+
+export async function prepareListPassportHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const body = req.body as PrepareListPassportRequestBody;
+
+    if (!body.passportObjectAddress) {
+      return res.status(400).json({
+        success: false,
+        error: "passportObjectAddress is required.",
+      });
+    }
+
+    const result = await passportListingService.prepareListPassport({
+      callerWalletAddress: req.user.walletAddress,
+      body,
+    });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] prepare list passport failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to prepare list passport status.",
+    });
+  }
+}
+
+export async function recordListPassportHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const body = req.body as RecordListPassportRequestBody;
+
+    if (!body.txHash || !body.passportObjectAddress) {
+      return res.status(400).json({
+        success: false,
+        error: "txHash and passportObjectAddress",
+      });
+    }
+
+    const result = await passportListingService.recordListPassport({ body });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] record list passport failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to list passport metadata.",
     });
   }
 }

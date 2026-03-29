@@ -5,3 +5,14 @@ export const REGISTRY_ADDRESS = process.env.REGISTRY_ADDRESS!; // address of adm
 export const LOOKUP_BY_PRODUCT_FN = `${MODULE_ADDRESS}::passport::passport_address_for_product_id`;
 const MODULE_NAME = "issuer_registry"
 export const GET_REGISTRY_FN = `${MODULE_ADDRESS}::${MODULE_NAME}::get_registry`;
+
+// Admin functions to set_status and update_metadata
+export const PASSPORT_SET_STATUS_FN      = `${MODULE_ADDRESS}::passport::set_status`;
+export const PASSPORT_UPDATE_METADATA_FN = `${MODULE_ADDRESS}::passport::update_metadata`;
+export const PASSPORT_LIST_FN = `${MODULE_ADDRESS}::passport::list_passport`;
+
+//status values
+export const STATUS_ACTIVE    = 1;
+export const STATUS_SUSPENDED = 2;
+export const STATUS_REVOKED   = 3;
+export const STATUS_LISTING   = 4;

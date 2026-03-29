@@ -130,7 +130,7 @@ export type GetProductByIdResponse = {
   status: number;
 };
 
-export type PassportProvenanceEventType = "MINTED" | "TRANSFERRED";
+export type PassportProvenanceEventType = "MINTED" | "TRANSFERRED" | "STATUS_CHANGED" | "METADATA_UPDATED" | "LISTED";
 
 export type PassportProvenanceEvent = {
   type: PassportProvenanceEventType;
@@ -149,3 +149,106 @@ export type GetPassportProvenanceResponse = {
   serialNumberPlain: string;
   events: PassportProvenanceEvent[];
 };
+
+export type PrepareSetStatusRequestBody = {
+  passportObjectAddress: string;
+  newStatus: number; // 1=ACTIVE, 2=SUSPENDED, 3=REVOKED, 4=LISTING
+};
+
+export type PrepareUpdateMetadataRequestBody = {
+  passportObjectAddress: string;
+  // Update metadata, for if product details have changed (repair, refurbishment and verification)
+  productName: string;
+  brand: string;
+  category: string;
+  serialNumber: string;
+  manufacturingDate: string;
+  materials: string | string[];
+  countryOfOrigin: string;
+  description: string;
+};
+
+export type PreparedSetStatusPayload = {
+  function: string;
+  functionArguments: unknown[];
+};
+
+export type PrepareSetStatusResponse =
+  | {
+      success: true;
+      payload: PreparedSetStatusPayload;
+    }
+  | {
+      success: false;
+      error: string;
+    };
+
+export type RecordSetStatusRequestBody = {
+  txHash: string;
+  passportObjectAddress: string;
+};
+
+export type PreparedUpdateMetadataPayload = {
+  function: string;
+  functionArguments: unknown[];
+};
+
+export type PrepareUpdateMetadataResponse =
+  | {
+      success: true;
+      metadataIpfsUri: string;
+      payload: PreparedUpdateMetadataPayload;
+    }
+  | {
+      success: false;
+      error: string;
+    };
+
+export type RecordUpdateMetadataRequestBody = {
+  txHash: string;
+  passportObjectAddress: string;
+};
+
+export type RecordUpdateMetadataResponse =
+  | {
+      success: true;
+      message: string;
+    }
+  | {
+      success: false;
+      error: string;
+    };
+
+export type PreparedListPassportPayload = {
+    function: string;
+    functionArguments: string[];
+  };
+
+export type PrepareListPassportRequestBody = {
+    passportObjectAddress: string;
+  };
+
+export type PrepareListPassportResponse =
+  | {
+      success: true;
+      payload: PreparedListPassportPayload;
+    }
+  | {
+      success: false;
+      error: string;
+    };
+
+export type RecordListPassportRequestBody = {
+  txHash: string;
+  passportObjectAddress: string;
+};
+
+export type RecordListPassportResponse =
+  | {
+      success: true;
+      message: string;
+    }
+  | {
+      success: false;
+      error: string;
+    };

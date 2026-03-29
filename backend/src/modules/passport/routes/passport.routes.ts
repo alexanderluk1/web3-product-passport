@@ -9,6 +9,12 @@ import {
   prepareMintPassportHandler,
   prepareTransferPassportHandler,
   recordTransferPassportHandler,
+  prepareSetStatusHandler,
+  recordSetStatusHandler,
+  prepareUpdateMetadataHandler,
+  recordUpdateMetadataHandler,
+  prepareListPassportHandler,
+  recordListPassportHandler,
 } from "../controllers/passport.controller";
 import { requireAuth } from "../../auth/middleware/requireAuth";
 import { requireRole } from "../../auth/middleware/requireRole";
@@ -38,6 +44,7 @@ passportRouter.post("/transfer/record",
     requireAuth,
     recordTransferPassportHandler
 );
+
 passportRouter.get("/products",
     requireAuth,
     requireRole("ISSUER", "ADMIN"),
@@ -50,3 +57,38 @@ passportRouter.get("/owned",
 passportRouter.get("/by-product/:productId/provenance", getPassportProvenanceByProductIdHandler);
 passportRouter.get("/by-product/:productId", getPassportByProductIdHandler);
 passportRouter.get("/:passportObjectAddr", getPassportHandler);
+
+// Marketplace routes
+passportRouter.post("/status/prepare",
+    requireAuth,
+    requireRole("ADMIN","ISSUER"),
+    prepareSetStatusHandler
+)
+
+passportRouter.post("/status/record",
+    requireAuth,
+    recordSetStatusHandler
+);
+
+passportRouter.post("/metadata/prepare",
+    requireAuth,
+    requireRole("ADMIN","ISSUER"),
+    upload.single("image"),
+    prepareUpdateMetadataHandler
+);
+
+passportRouter.post("/metadata/record",
+    requireAuth,
+    recordUpdateMetadataHandler
+);
+
+passportRouter.post("/list/prepare",
+    requireAuth,
+    requireRole("ADMIN","ISSUER"),
+    prepareListPassportHandler
+);
+
+passportRouter.post("/list/record",
+    requireAuth,
+    recordListPassportHandler
+);
