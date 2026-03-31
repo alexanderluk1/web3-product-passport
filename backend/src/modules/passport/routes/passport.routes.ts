@@ -15,6 +15,11 @@ import {
   recordUpdateMetadataHandler,
   prepareListPassportHandler,
   recordListPassportHandler,
+  requestDelistHandler,
+  prepareSellPassportHandler,
+  recordSellPassportHandler,
+  prepareConfirmReceiptHandler,
+  recordConfirmReceiptHandler,
 } from "../controllers/passport.controller";
 import { requireAuth } from "../../auth/middleware/requireAuth";
 import { requireRole } from "../../auth/middleware/requireRole";
@@ -84,11 +89,35 @@ passportRouter.post("/metadata/record",
 
 passportRouter.post("/list/prepare",
     requireAuth,
-    requireRole("ADMIN","ISSUER"),
     prepareListPassportHandler
 );
 
 passportRouter.post("/list/record",
     requireAuth,
     recordListPassportHandler
+);
+
+passportRouter.post("/delist/request",
+    requireAuth,
+    requestDelistHandler
+);
+
+passportRouter.post("/sell/prepare",
+    requireAuth,
+    prepareSellPassportHandler
+);
+
+passportRouter.post("/sell/record",
+    requireAuth,
+    recordSellPassportHandler
+);
+
+passportRouter.post("/receipt/prepare",
+    requireAuth,
+    prepareConfirmReceiptHandler
+);
+
+passportRouter.post("/receipt/record",
+    requireAuth,
+    recordConfirmReceiptHandler
 );

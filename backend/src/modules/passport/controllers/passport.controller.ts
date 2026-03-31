@@ -10,6 +10,11 @@ import type {
   RecordUpdateMetadataRequestBody,
   PrepareListPassportRequestBody,
   RecordListPassportRequestBody,
+  RequestDelistRequestBody,
+  PrepareSellPassportRequestBody,
+  RecordSellPassportRequestBody,
+  PrepareConfirmReceiptRequestBody,
+  RecordConfirmReceiptRequestBody,
 } from "../types/passport.types";
 
 function normalizeByteVectorLike(value: unknown): unknown {
@@ -296,6 +301,7 @@ export async function prepareSetStatusHandler(req: Request, res: Response) {
 
     const result = await passportListingService.prepareSetStatus({
       callerWalletAddress: req.user.walletAddress,
+      callerRole: req.user.role,
       body,
     });
 
@@ -330,7 +336,7 @@ export async function recordSetStatusHandler(req: Request, res: Response) {
     if (!body.txHash || !body.passportObjectAddress) {
       return res.status(400).json({
         success: false,
-        error: "txHash and passportObjectAddress",
+        error: "txHash and passportObjectAddress are required",
       });
     }
 
@@ -366,6 +372,7 @@ export async function prepareUpdateMetadataHandler(req: Request, res: Response) 
 
     const result = await passportListingService.prepareUpdateMetadata({
       callerWalletAddress: req.user.walletAddress,
+      callerRole: req.user.role,
       body,
       imageFile: req.file,
     });
@@ -401,7 +408,7 @@ export async function recordUpdateMetadataHandler(req: Request, res: Response) {
     if (!body.txHash || !body.passportObjectAddress) {
       return res.status(400).json({
         success: false,
-        error: "txHash and passportObjectAddress",
+        error: "txHash and passportObjectAddress are required",
       });
     }
 
@@ -424,6 +431,8 @@ export async function recordUpdateMetadataHandler(req: Request, res: Response) {
   }
 }
 
+// Set status to Storing and start of listing process on chain (initiated by owner)
+// Will lead to status Storing, after admin receives product it would be changed to Verifying, then listing
 export async function prepareListPassportHandler(req: Request, res: Response) {
   try {
     if (!req.user) {
@@ -478,7 +487,7 @@ export async function recordListPassportHandler(req: Request, res: Response) {
     if (!body.txHash || !body.passportObjectAddress) {
       return res.status(400).json({
         success: false,
-        error: "txHash and passportObjectAddress",
+        error: "txHash and passportObjectAddress are required",
       });
     }
 
@@ -497,6 +506,206 @@ export async function recordListPassportHandler(req: Request, res: Response) {
         error instanceof Error
           ? error.message
           : "Failed to list passport metadata.",
+    });
+  }
+}
+
+// Starts delisting process (sends delist request to admins, can only be done at status Shipping and Listing)
+// Doesn't start anything on chain will be logged by backend, admins will then after approving the request call set_status for it
+export async function requestDelistHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const body = req.body as RequestDelistRequestBody;
+
+    if (!body.passportObjectAddress) {
+      return res.status(400).json({
+        success: false,
+        error: "passportObjectAddress is required.",
+      });
+    }
+
+    const result = await passportListingService.requestDelist({
+      callerWalletAddress: req.user.walletAddress,
+      body,
+    });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] request delist failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to submit delist request.",
+    });
+  }
+}
+
+// Transfer to buyer and change status to Sold for listed products
+export async function prepareSellPassportHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const body = req.body as PrepareSellPassportRequestBody;
+
+    if (!body.passportObjectAddress || !body.buyerAddress) {
+      return res.status(400).json({
+        success: false,
+        error: "passportObjectAddress and buyerAddress are required.",
+      });
+    }
+
+    const result = await passportListingService.prepareSellPassport({
+      callerWalletAddress: req.user.walletAddress,
+      body,
+    });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] prepare sell passport failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to prepare sell passport.",
+    });
+  }
+}
+
+// Records that the transfer to buyer was successful
+export async function recordSellPassportHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const body = req.body as RecordSellPassportRequestBody;
+
+    if (!body.txHash || !body.passportObjectAddress || !body.buyerAddress) {
+      return res.status(400).json({
+        success: false,
+        error: "txHash, passportObjectAddress and buyerAddress are required.",
+      });
+    }
+
+    const result = await passportListingService.recordSellPassport({ body });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] record sell passport failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to record sell passport.",
+    });
+  }
+}
+
+// User calls this function to complete the delisting process by confirming the receipt which would trigger the own chain update
+export async function prepareConfirmReceiptHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const body = req.body as PrepareConfirmReceiptRequestBody;
+
+    if (!body.passportObjectAddress) {
+      return res.status(400).json({
+        success: false,
+        error: "passportObjectAddress is required.",
+      });
+    }
+
+    const result = await passportListingService.prepareConfirmReceipt({
+      callerWalletAddress: req.user.walletAddress,
+      body,
+    });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] prepare confirm receipt failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to prepare confirm receipt.",
+    });
+  }
+}
+
+// Records that the transaction to confirm receipt and return passport status to active went through
+export async function recordConfirmReceiptHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const body = req.body as RecordConfirmReceiptRequestBody;
+
+    if (!body.txHash || !body.passportObjectAddress) {
+      return res.status(400).json({
+        success: false,
+        error: "txHash and passportObjectAddress are required.",
+      });
+    }
+
+    const result = await passportListingService.recordConfirmReceipt({ body });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] record confirm receipt failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to record confirm receipt.",
     });
   }
 }

@@ -37,7 +37,10 @@ module luxpass::passport {
     const STATUS_ACTIVE: u8 = 1;
     const STATUS_SUSPENDED: u8 = 2;
     const STATUS_REVOKED: u8 = 3;
-    const STATUS_LISTING: u8 = 4;
+    const STATUS_STORING: u8 = 4;    // Initial state after seller initiates a listing
+    const STATUS_VERIFYING: u8 = 5;  // Admin has received the physical product
+    const STATUS_LISTING: u8 = 6;    // Product verified/minted; live for sale
+    const STATUS_RETURNING: u8 = 7;       // Product is being returned to Owner
 
     // ----------------------
     // Passport data (stored under the passport Object address)
@@ -94,6 +97,7 @@ module luxpass::passport {
     struct PassportStatusChanged has drop, store { passport: address, old_status: u8, new_status: u8 }
     struct PassportListed has drop, store { passport: address, owner: address }
     struct PassportUpdated has drop, store { passport: address, updater: address, new_metadata_uri: String, new_metadata_hash: vector<u8> }
+    struct PassportDelisted has drop, store {passport: address, owner: address}
 
     // Event handles stored under the registry/admin address
     struct PassportEvents has key {
@@ -102,6 +106,7 @@ module luxpass::passport {
         status_changed: event::EventHandle<PassportStatusChanged>,
         listed: event::EventHandle<PassportListed>,
         updated: event::EventHandle<PassportUpdated>,
+        delisted: event::EventHandle<PassportDelisted>,
     }
 
     // Initialize event streams under the admin/registry address.
@@ -117,6 +122,7 @@ module luxpass::passport {
                 status_changed: account::new_event_handle<PassportStatusChanged>(admin),
                 listed: account::new_event_handle<PassportListed>(admin),
                 updated: account::new_event_handle<PassportUpdated>(admin),
+                delisted: account::new_event_handle<PassportDelisted>(admin),
             },
         );
     }
@@ -214,7 +220,7 @@ module luxpass::passport {
         let passport_addr = object::object_address(&passport);
         let p = borrow_global<Passport>(passport_addr);
         assert!(p.transferable, E_NOT_TRANSFERABLE); // Check if passport is transferable at all
-        assert!(p.status != STATUS_LISTING, E_PASSPORT_LISTED);// Check if passport is locked from transfer
+        assert!(p.status == STATUS_ACTIVE || p.status == STATUS_LISTING, E_NOT_TRANSFERABLE);// Check if passport is active or listing and available to transfer
 
         let tr = &borrow_global<PassportControl>(passport_addr).transfer_ref;
         let ltr = object::generate_linear_transfer_ref(tr);
@@ -225,7 +231,7 @@ module luxpass::passport {
         event::emit_event(&mut ev.transferred, PassportTransferred { passport: passport_addr, from: owner_addr, to });
     }
 
-    // Lists own passport so that passport cannot be transferred until Admin approves (owner)
+    // Lists own passport on marketplace so that passport cannot be transferred until Admin approves (owner)
     public entry fun list_passport(
         owner: &signer,
         passport: Object<Passport>,
@@ -236,10 +242,29 @@ module luxpass::passport {
 
         let passport_addr = object::object_address(&passport);
         let p = borrow_global_mut<Passport>(passport_addr);
-        assert!(p.transferable || p.status != STATUS_ACTIVE, E_NOT_TRANSFERABLE);
+        assert!(p.transferable && p.status == STATUS_ACTIVE, E_NOT_TRANSFERABLE);
 
-        let old = p.status;
-        p.status = STATUS_LISTING;
+        p.status = STATUS_STORING;
+
+        assert!(exists<PassportEvents>(registry_addr), E_EVENTS_NOT_INITIALIZED);
+        let ev = borrow_global_mut<PassportEvents>(registry_addr);
+        event::emit_event(&mut ev.listed, PassportListed { passport: passport_addr, owner: owner_addr });
+    }
+
+    // Allow owner to verify that passport has been returned, admin must set state to STATUS_RETURNING first (owner)
+    public entry fun delist_passport(
+        owner: &signer,
+        passport: Object<Passport>,
+        registry_addr: address,
+    ) acquires Passport,PassportEvents{
+        let owner_addr = signer::address_of(owner);
+        assert!(object::is_owner(passport, owner_addr), E_NOT_OWNER);
+
+        let passport_addr = object::object_address(&passport);
+        let p = borrow_global_mut<Passport>(passport_addr);
+        assert!(p.transferable && p.status == STATUS_RETURNING, E_NOT_TRANSFERABLE);
+
+        p.status = STATUS_ACTIVE;
 
         assert!(exists<PassportEvents>(registry_addr), E_EVENTS_NOT_INITIALIZED);
         let ev = borrow_global_mut<PassportEvents>(registry_addr);
@@ -282,7 +307,7 @@ module luxpass::passport {
         let is_admin = caller_addr == issuer_registry::admin_of(registry_addr);
         let is_issuer = caller_addr == p.issuer;
         assert!(is_admin || is_issuer, E_NOT_AUTHORIZED);
-        assert!(p.status != STATUS_LISTING || is_admin, E_PASSPORT_LISTED); // Admin can change status from listing, Issuer cannot
+        assert!((p.status != STATUS_LISTING && p.status != STATUS_STORING && p.status != STATUS_VERIFYING && p.status != STATUS_RETURNING) || is_admin, E_PASSPORT_LISTED); // Admin can change status of marketplace statuses, Issuer cannot
         assert!(is_admin || new_status != STATUS_LISTING, E_NOT_AUTHORIZED); // Issuer cannot set listing status
 
         let old = p.status;
@@ -291,12 +316,6 @@ module luxpass::passport {
         assert!(exists<PassportEvents>(registry_addr), E_EVENTS_NOT_INITIALIZED);
         let ev = borrow_global_mut<PassportEvents>(registry_addr);
         event::emit_event(&mut ev.status_changed, PassportStatusChanged { passport: passport_addr, old_status: old, new_status });
-
-        if (new_status == STATUS_LISTING) {
-            let passport_obj = object::address_to_object<Passport>(passport_addr);
-            let current_owner = object::owner(passport_obj);
-            event::emit_event(&mut ev.listed, PassportListed { passport: passport_addr, owner: current_owner });
-        }
     }
 
     // ----------------------
@@ -328,8 +347,8 @@ module luxpass::passport {
     }
 
     #[view]
-    public fun status_labels(): (u8, u8, u8, u8) {
-        (STATUS_ACTIVE, STATUS_SUSPENDED, STATUS_REVOKED, STATUS_LISTING)
+    public fun status_labels(): (u8, u8, u8, u8, u8, u8, u8) {
+        (STATUS_ACTIVE, STATUS_SUSPENDED, STATUS_REVOKED, STATUS_STORING, STATUS_VERIFYING, STATUS_LISTING, STATUS_RETURNING)
     }
 
     // Expose event stream metadata for off-chain indexing
@@ -360,6 +379,12 @@ module luxpass::passport {
     public fun status_updated_handle(registry_addr: address): (guid::ID, u64) acquires PassportEvents {
         assert!(exists<PassportEvents>(registry_addr), E_EVENTS_NOT_INITIALIZED);
         let h = &borrow_global<PassportEvents>(registry_addr).updated;
+        (guid::id(event::guid(h)), event::counter(h))
+    }
+
+    public fun status_deListed_handle(registry_addr: address): (guid::ID, u64) acquires PassportEvents {
+        assert!(exists<PassportEvents>(registry_addr), E_EVENTS_NOT_INITIALIZED);
+        let h = &borrow_global<PassportEvents>(registry_addr).delisted;
         (guid::id(event::guid(h)), event::counter(h))
     }
 }

@@ -10,9 +10,13 @@ export const GET_REGISTRY_FN = `${MODULE_ADDRESS}::${MODULE_NAME}::get_registry`
 export const PASSPORT_SET_STATUS_FN      = `${MODULE_ADDRESS}::passport::set_status`;
 export const PASSPORT_UPDATE_METADATA_FN = `${MODULE_ADDRESS}::passport::update_metadata`;
 export const PASSPORT_LIST_FN = `${MODULE_ADDRESS}::passport::list_passport`;
+export const PASSPORT_DELIST_FN = `${MODULE_ADDRESS}::passport::delist_passport`;
 
 //status values
 export const STATUS_ACTIVE    = 1;
 export const STATUS_SUSPENDED = 2;
 export const STATUS_REVOKED   = 3;
-export const STATUS_LISTING   = 4;
+export const STATUS_STORING = 4;
+export const STATUS_VERIFYING = 5;
+export const STATUS_LISTING = 6;
+export const STATUS_RETURNING = 7;

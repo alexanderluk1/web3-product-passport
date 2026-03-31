@@ -152,7 +152,7 @@ export type GetPassportProvenanceResponse = {
 
 export type PrepareSetStatusRequestBody = {
   passportObjectAddress: string;
-  newStatus: number; // 1=ACTIVE, 2=SUSPENDED, 3=REVOKED, 4=LISTING
+  newStatus: number; // 1=ACTIVE, 2=SUSPENDED, 3=REVOKED, 4=STORING, 5=VERIFYING, 6=LISTING, 7=RETURNING
 };
 
 export type PrepareUpdateMetadataRequestBody = {
@@ -252,3 +252,92 @@ export type RecordListPassportResponse =
       success: false;
       error: string;
     };
+
+// Delist request (user wants to delist the item from marketplace, can only be done at status Shipping and Listing)
+export type RequestDelistRequestBody = {
+  passportObjectAddress: string;
+  fullName?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  country?: string;
+};
+
+export type RequestDelistResponse =
+  | {
+      success: true;
+      message: string;
+    }
+  | {
+      success: false;
+      error: string;
+    };
+
+// Sell request for marketplace items at Listing status (mostly same as regular transfer but trigger different backend flow to notify Admin to change passport status to Sold)
+export type PrepareSellPassportRequestBody = {
+  passportObjectAddress: string;
+  buyerAddress: string;
+};
+
+export type PreparedSellPassportPayload = {
+  function: string;
+  functionArguments: string[];
+};
+
+export type PrepareSellPassportResponse =
+  | {
+      success: true;
+      payload: PreparedSellPassportPayload;
+    }
+  | {
+      success: false;
+      error: string;
+    };
+
+export type RecordSellPassportRequestBody = {
+  txHash: string;
+  passportObjectAddress: string;
+  buyerAddress: string; // backend verifies on-chain owner matches this before notifying Admin
+};
+
+export type RecordSellPassportResponse =
+  | {
+      success: true;
+      message: string;
+    }
+  | {
+      success: false;
+      error: string;
+    };
+
+// Buyer confirms shippin receipt (passport status must be shipping and buyer must be current owner)
+export type PrepareConfirmReceiptRequestBody = {
+  passportObjectAddress: string;
+};
+
+export type PrepareConfirmReceiptResponse =
+  | {
+      success: true;
+      payload: PreparedSetStatusPayload; // set_status(STATUS_ACTIVE)
+    }
+  | {
+      success: false;
+      error: string;
+    };
+
+export type RecordConfirmReceiptRequestBody = {
+  txHash: string;
+  passportObjectAddress: string;
+};
+
+export type RecordConfirmReceiptResponse =
+  | {
+      success: true;
+      message: string;
+    }
+  | {
+      success: false;
+      error: string;
+    }
