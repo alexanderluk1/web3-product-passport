@@ -3,6 +3,7 @@ import { passportRouter } from "./modules/passport/routes/passport.routes";
 import authRouter from "./modules/auth/routes/auth.routes";
 import adminRegistryRouter from "./modules/admin/routes/adminRegistry.routes";
 import issuerRegistryRoutes from "./modules/issuerRegistry/routes/issuerRegistry.routes"
+import { lptRouter } from "./modules/luxpasstoken/routes/lpt.routes";
 
 /**
  * Create and configure the Express app.
@@ -10,6 +11,9 @@ import issuerRegistryRoutes from "./modules/issuerRegistry/routes/issuerRegistry
  */
 export function createApp() {
   const app = express();
+  app.set("json replacer", (_key: string, value: unknown) =>
+    typeof value === "bigint" ? value.toString() : value
+  );
   const allowedOrigins = (process.env.CORS_ORIGINS ?? "http://localhost:5173")
     .split(",")
     .map((origin) => origin.trim())
@@ -80,7 +84,8 @@ export function createApp() {
   });
 
   // Actual route 
-  app.use("/api/passports", passportRouter)
+  app.use("/api/passports", passportRouter);
+  app.use("/api/tokens", lptRouter)
   app.use("/auth", authRouter);
   app.use("/admin", adminRegistryRouter);
   app.use("/admin", issuerRegistryRoutes);

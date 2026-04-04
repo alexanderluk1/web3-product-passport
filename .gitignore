@@ -18,6 +18,9 @@ out/
 .env.*
 !.env.example
 
+# Local sign helper -use scripts/sign-challenge.example.ts and do 'npm run sign:setup'
+backend/scripts/sign-challenge.ts
+
 # ---------- Runtime / cache ----------
 .cache/
 .tmp/

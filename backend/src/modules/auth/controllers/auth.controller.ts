@@ -1,8 +1,18 @@
 import { Request, Response } from "express";
 import { authService } from "../services/auth.service";
 
+function jsonBodyError(res: Response) {
+  return res.status(400).json({
+    message:
+      "Missing JSON body",
+  });
+}
+
 export async function generateChallengeHandler(req: Request, res: Response) {
   try {
+    if (!req.body || typeof req.body !== "object") {
+      return jsonBodyError(res);
+    }
     const { walletAddress } = req.body;
 
     const result = await authService.generateChallenge(walletAddress);
@@ -17,6 +27,9 @@ export async function generateChallengeHandler(req: Request, res: Response) {
 
 export async function loginHandler(req: Request, res: Response) {
   try {
+    if (!req.body || typeof req.body !== "object") {
+      return jsonBodyError(res);
+    }
     const { walletAddress, challengeId, signature } = req.body;
 
     const result = await authService.login({
