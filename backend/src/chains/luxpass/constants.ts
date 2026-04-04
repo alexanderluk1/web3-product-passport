@@ -11,6 +11,7 @@ export const PASSPORT_SET_STATUS_FN      = `${MODULE_ADDRESS}::passport::set_sta
 export const PASSPORT_UPDATE_METADATA_FN = `${MODULE_ADDRESS}::passport::update_metadata`;
 export const PASSPORT_LIST_FN = `${MODULE_ADDRESS}::passport::list_passport`;
 export const PASSPORT_DELIST_FN = `${MODULE_ADDRESS}::passport::delist_passport`;
+export const PASSPORT_MINTLIST_FN = `${MODULE_ADDRESS}::passport::mint_listing`;
 
 //status values
 export const STATUS_ACTIVE    = 1;

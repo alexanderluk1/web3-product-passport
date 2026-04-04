@@ -16,10 +16,15 @@ import {
   prepareListPassportHandler,
   recordListPassportHandler,
   requestDelistHandler,
-  prepareSellPassportHandler,
-  recordSellPassportHandler,
   prepareConfirmReceiptHandler,
   recordConfirmReceiptHandler,
+  approveDelistHandler,
+  requestListingNoPassport,
+  receiveNoPassportHandler,
+  receivePassportHandler,
+  verifyPassportHandler,
+  prepareMintListPassportHandler,
+  recordMintListPassportHandler,
 } from "../controllers/passport.controller";
 import { requireAuth } from "../../auth/middleware/requireAuth";
 import { requireRole } from "../../auth/middleware/requireRole";
@@ -87,30 +92,64 @@ passportRouter.post("/metadata/record",
     recordUpdateMetadataHandler
 );
 
-passportRouter.post("/list/prepare",
+passportRouter.post("/list/passport-prepare",
     requireAuth,
     prepareListPassportHandler
 );
 
-passportRouter.post("/list/record",
+passportRouter.post("/list/passport-record",
     requireAuth,
     recordListPassportHandler
 );
+
+passportRouter.post("/list/no-passport",
+    requireAuth,
+    requestListingNoPassport
+);
+
+passportRouter.post("/receiver/no-passport",
+    requireAuth,
+    requireRole("ADMIN"),
+    receiveNoPassportHandler
+)
+
+passportRouter.post("/receiver/passport",
+    requireAuth,
+    requireRole("ADMIN"),
+    receivePassportHandler
+)
+
+// to Do verify no passport route: return new mint passport payload
+// Then after that is recorded in database, , generate set status payload to listed (might create a new mint for buyer service)
+// The set status record will handle the final database update for this
+passportRouter.post("/verify/no-passport",
+    requireAuth,
+    requireRole("Admin"),
+    prepareMintListPassportHandler
+)
+
+passportRouter.post("/verify/no-passport-record",
+    requireAuth,
+    requireRole("Admin"),
+    recordMintListPassportHandler
+)
+
+passportRouter.post("/verify/passport",
+    requireAuth,
+    requireRole("Admin"),
+    verifyPassportHandler
+)
 
 passportRouter.post("/delist/request",
     requireAuth,
     requestDelistHandler
 );
 
-passportRouter.post("/sell/prepare",
+passportRouter.post("/delist/approve",
     requireAuth,
-    prepareSellPassportHandler
-);
-
-passportRouter.post("/sell/record",
-    requireAuth,
-    recordSellPassportHandler
-);
+    requireRole("ADMIN"),
+    approveDelistHandler
+)
 
 passportRouter.post("/receipt/prepare",
     requireAuth,

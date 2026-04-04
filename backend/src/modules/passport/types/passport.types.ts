@@ -150,11 +150,6 @@ export type GetPassportProvenanceResponse = {
   events: PassportProvenanceEvent[];
 };
 
-export type PrepareSetStatusRequestBody = {
-  passportObjectAddress: string;
-  newStatus: number; // 1=ACTIVE, 2=SUSPENDED, 3=REVOKED, 4=STORING, 5=VERIFYING, 6=LISTING, 7=RETURNING
-};
-
 export type PrepareUpdateMetadataRequestBody = {
   passportObjectAddress: string;
   // Update metadata, for if product details have changed (repair, refurbishment and verification)
@@ -166,6 +161,11 @@ export type PrepareUpdateMetadataRequestBody = {
   materials: string | string[];
   countryOfOrigin: string;
   description: string;
+};
+
+export type PrepareSetStatusRequestBody = {
+  passportObjectAddress: string;
+  newStatus: number; // 1=ACTIVE, 2=SUSPENDED, 3=REVOKED, 4=STORING, 5=VERIFYING, 6=LISTING, 7=RETURNING
 };
 
 export type PreparedSetStatusPayload = {
@@ -187,6 +187,16 @@ export type RecordSetStatusRequestBody = {
   txHash: string;
   passportObjectAddress: string;
 };
+
+export type RecordSetStatusResponse =
+  | {
+      success: true;
+      message: string;
+    }
+  | {
+      success: false;
+      error: string;
+    };
 
 export type PreparedUpdateMetadataPayload = {
   function: string;
@@ -253,6 +263,31 @@ export type RecordListPassportResponse =
       error: string;
     };
 
+export type submitListingRequestResponse =
+  | {
+      success: true;
+      message: string;
+    }
+  | {
+      success: false;
+      error: string;
+    };
+
+export type UpdateNoPassportListingRequestBody = {
+  tempObjectAddress: string;
+  status?: string;
+  newObjectAddress?: string;
+}
+
+export type UpdateNoPassportListingResponse =   | {
+  success: true;
+  message: string;
+}
+| {
+  success: false;
+  error: string;
+};
+
 // Delist request (user wants to delist the item from marketplace, can only be done at status Shipping and Listing)
 export type RequestDelistRequestBody = {
   passportObjectAddress: string;
@@ -275,44 +310,7 @@ export type RequestDelistResponse =
       error: string;
     };
 
-// Sell request for marketplace items at Listing status (mostly same as regular transfer but trigger different backend flow to notify Admin to change passport status to Sold)
-export type PrepareSellPassportRequestBody = {
-  passportObjectAddress: string;
-  buyerAddress: string;
-};
-
-export type PreparedSellPassportPayload = {
-  function: string;
-  functionArguments: string[];
-};
-
-export type PrepareSellPassportResponse =
-  | {
-      success: true;
-      payload: PreparedSellPassportPayload;
-    }
-  | {
-      success: false;
-      error: string;
-    };
-
-export type RecordSellPassportRequestBody = {
-  txHash: string;
-  passportObjectAddress: string;
-  buyerAddress: string; // backend verifies on-chain owner matches this before notifying Admin
-};
-
-export type RecordSellPassportResponse =
-  | {
-      success: true;
-      message: string;
-    }
-  | {
-      success: false;
-      error: string;
-    };
-
-// Buyer confirms shippin receipt (passport status must be shipping and buyer must be current owner)
+// Buyer confirms shipping receipt (passport status must be shipping and buyer must be current owner)
 export type PrepareConfirmReceiptRequestBody = {
   passportObjectAddress: string;
 };
@@ -341,3 +339,56 @@ export type RecordConfirmReceiptResponse =
       success: false;
       error: string;
     }
+
+export type PrepareMintListPassportRequestBody = {
+  tempObjectAddress: string; // temporary object address used for listing without passport (Used to get the listing)
+  productName: string;
+  brand: string;
+  category: string;
+  serialNumber: string;
+  manufacturingDate: string;
+  materials: string | string[];
+  countryOfOrigin: string;
+  description: string;
+}
+
+export type PreparedMintListPayload = {
+  function: string;
+  functionArguments: Array<string | boolean | number[]>;
+}
+
+export type PrepareMintListPassportResponse = 
+  | {
+      success: true;
+      imageCid: string;
+      imageIpfsUri: string;
+      metadataCid: string;
+      metadataIpfsUri: string;
+      metadata: PassportMetadata;
+      payload: PreparedMintPayload;
+  }
+  | {
+      success: false;
+      error: string;
+  }
+
+export type RecordMintListRequestBody = {
+  txHash: string;
+  tempPassportObjectAddress: string;
+  passportObjectAddress: string;
+  ownerAddress: string;
+};
+
+export type RecordMintListResponse =
+  | {
+      success: true;
+      message: string;
+    }
+  | {
+      success: false;
+      error: string;
+    }
+
+export type PrepareMarketplaceSetStatusRequestBody = {
+    passportObjectAddress: string;
+};

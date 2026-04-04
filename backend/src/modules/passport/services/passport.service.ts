@@ -18,6 +18,7 @@ import {
   PreparedSetStatusPayload,
   PrepareSetStatusResponse,
   RecordSetStatusRequestBody,
+  RecordSetStatusResponse,
   PreparedUpdateMetadataPayload,
   PrepareUpdateMetadataResponse,
   RecordUpdateMetadataRequestBody,
@@ -29,15 +30,18 @@ import {
   RecordListPassportResponse,
   RequestDelistRequestBody,
   RequestDelistResponse,
-  PrepareSellPassportRequestBody,
-  PrepareSellPassportResponse,
-  PreparedSellPassportPayload,
-  RecordSellPassportRequestBody,
-  RecordSellPassportResponse,
   PrepareConfirmReceiptRequestBody,
   PrepareConfirmReceiptResponse,
   RecordConfirmReceiptRequestBody,
   RecordConfirmReceiptResponse,
+  submitListingRequestResponse,
+  UpdateNoPassportListingRequestBody,
+  UpdateNoPassportListingResponse,
+  PreparedMintListPayload,
+  PrepareMintListPassportResponse,
+  PrepareMintListPassportRequestBody,
+  RecordMintListRequestBody,
+  RecordMintListResponse,
 } from "../types/passport.types";
 import { normalizeAddress, validateWalletAddress } from "../../../utils/walletHelper";
 import {
@@ -68,6 +72,7 @@ import {
   STATUS_VERIFYING,
   STATUS_LISTING,
   STATUS_RETURNING,
+  PASSPORT_MINTLIST_FN,
 } from "../../../chains/luxpass/constants";
 import { initRegistry as writeInitRegistry } from "../../../chains/luxpass/writers/initRegistry";
 import {
@@ -75,6 +80,19 @@ import {
   saveIssuerProductsToStore,
   clearIssuerProductsFromStore,
 } from "../store/productStore";
+// Repository import
+import {
+  createListingRequest,
+  createDelistRequest,
+  updateDelistRequestStatus,
+  getDelistRequest,
+  updateListingRequestOwner,
+  updateListingRequestStatus,
+  ListingRequestStatus,
+  DelistRequestStatus,
+  getListingRequest,
+  updateListingRequestPassportAddress,
+} from "../repository/listing_repository";
 
 const aptos = makeAptosClient();
 const FULLNODE_URL =
@@ -314,17 +332,23 @@ export function buildPassportDeListPayload(params: {
   };
 }
 
-export function buildSellPassportPayload(params: {
-  passportObjectAddress: string;
-  buyerAddress: string;
+export function buildMintListPayload(params: {
   registryAddress: string;
-}): PreparedSellPassportPayload {
+  ownerAddress: string;
+  serialPlainBytes: number[];
+  metadataIpfsUri: string;
+  metadataBytes: number[];
+  placeholderAddress: string;
+}): PreparedMintListPayload {
   return {
-    function: PASSPORT_TRANSFER_FN,
+    function: PASSPORT_MINTLIST_FN,
     functionArguments: [
-      params.passportObjectAddress,
-      params.newOwnerAddress,
       params.registryAddress,
+      params.ownerAddress,
+      params.serialPlainBytes,
+      params.metadataIpfsUri,
+      params.metadataBytes,
+      params.placeholderAddress,
     ],
   };
 }
@@ -336,6 +360,13 @@ function isValidStatus(status: number): boolean {
 function isCacheFresh(syncedAt: number): boolean {
   return Date.now() - syncedAt < PRODUCT_CACHE_TTL_MS;
 }
+
+const listingStatusMap: Record<number, ListingRequestStatus> = {
+  [STATUS_STORING]: "pending",
+  [STATUS_VERIFYING]: "verifying",
+  [STATUS_LISTING]: "listed",
+  [STATUS_RETURNING]: "returning",
+};
 
 function parseTransferable(value: unknown): boolean {
   if (typeof value === "boolean") {
@@ -626,8 +657,13 @@ export const passportService = {
 
     // Invalidate issuer product cache (best-effort)
     try {
+      const normalizedPassportAddr = normalizeAddress(body.passportObjectAddress);
       const passport = await getPassport(aptos, normalizeAddress(body.passportObjectAddress));
+      if (passport.status === STATUS_LISTING){
+        await updateListingRequestOwner(normalizedPassportAddr, normalizeAddress(body.newOwnerAddress))
+      }
       clearIssuerProductsFromStore(passport.issuer);
+      // Log the owner change in listings if passport status is listed
     } catch {
       // best-effort
     }
@@ -920,14 +956,18 @@ export const passportListingService = {
       return { success: false, error: "Transaction is not a set_status transaction." };
     }
 
-    // Remove cached product data for user, to ensure updated status is reflected on frontend.
-    // Imaging something similar would result for admins as issuers
+    // Check if new status is marketplace status and if it is update listing request status in DB, if fails log and move on
     try {
       const passport = await getPassport(aptos, normalizeAddress(body.passportObjectAddress));
-      // Placeholder will get back to this later for individual users
-      clearIssuerProductsFromStore(passport.issuer);
+      if (passport.status === STATUS_LISTING || passport.status === STATUS_STORING || passport.status === STATUS_VERIFYING || passport.status === STATUS_RETURNING){
+        const listing_status = listingStatusMap[passport.status]
+        await updateListingRequestStatus(normalizeAddress(body.passportObjectAddress), listing_status)
+        if (passport.status === STATUS_RETURNING){
+          await updateDelistRequestStatus(normalizeAddress(body.passportObjectAddress), "closed")
+        }
+      }
     } catch {
-      // even if it fails cache would be cleared eventually, should log this somewhere though for debugging
+      // logging goes here
     }
 
     return { success: true, message: "Status update recorded successfully." };
@@ -1171,17 +1211,218 @@ export const passportListingService = {
       return { success: false, error: "Transaction is not a list_passport transaction." };
     }
 
-    // Remove cached product data for user, to ensure updated status is reflected on frontend.
-    // Imaging something similar would result for admins as issuers
     try {
-      const passport = await getPassport(aptos, normalizeAddress(body.passportObjectAddress));
-      // Placeholder will get back to this later for individual users
-      clearIssuerProductsFromStore(passport.issuer);
+      const normalizedPassportAddr = normalizeAddress(body.passportObjectAddress);
+      const passportOwner = await getPassportOwner(normalizedPassportAddr);
+      await createListingRequest(
+        true,
+        normalizeAddress(passportOwner),
+        normalizedPassportAddr,
+      )
     } catch {
       // even if it fails cache would be cleared eventually, should log this somewhere though for debugging
     }
 
     return { success: true, message: "Listing Passport recorded successfully." };
+  },
+
+  // For if has_passport is false, no_passport route
+  async submitListingRequest(params: {
+    callerWalletAddress: string;
+  }): Promise<submitListingRequestResponse> {
+    const { callerWalletAddress } = params;
+
+    validateWalletAddress(callerWalletAddress, "caller wallet address");
+    
+    const normalizedCaller = normalizeAddress(callerWalletAddress);
+
+    try{
+      await createListingRequest(
+        false,
+        normalizedCaller,
+      );
+    }catch{
+        return { success: false, 
+                 error: "Failed to submit listing request. Please try again later.",
+                };
+    }
+
+    return {
+      success: true,
+      message: "Listing request submitted. LuxPass will verify your item before listing.",
+    };
+  },
+
+  // find and update listing request with no_passport
+  async updateNoPassportListingStatus(params: {
+    callerRole: "ADMIN";
+    body: UpdateNoPassportListingRequestBody;
+  }): Promise<UpdateNoPassportListingResponse> {
+    const { callerRole, body } = params;
+
+    if (callerRole !== "ADMIN") {
+      return { success: false, error: "Only Admin can update listing requests." };
+    }
+
+    if (body.status !== "verifying" && body.status !== "listed"){
+      return { success: false, error: "Invalid status update for no-passport listings" };
+    }
+
+    try{
+      await updateListingRequestStatus(normalizeAddress(body.tempObjectAddress), body.status);
+    }catch{
+        return { success: false, 
+                 error: "Failed to update listing request. Please try again later.",
+                };
+    }
+
+    return {
+      success: true,
+      message: `Listing request has been ${body.status.toLowerCase()}.`,
+    };
+  },
+
+  // Final step before listing for no passport verification stage
+  async prepareMintListPassport(params: {
+    adminWalletAddress: string;
+    body: PrepareMintListPassportRequestBody;
+    imageFile?: Express.Multer.File;
+  }): Promise<PrepareMintListPassportResponse> {
+    const { adminWalletAddress, body, imageFile } = params;
+
+    try{
+      // First get the owner address from the listing then use it as owner_address in a copy of the mint service flow
+      const listing = await getListingRequest(body.tempObjectAddress)
+
+      if (listing.status !== "verifying"){
+        return { success: false, error: "Listing request is not in verifying stage." };
+      }
+      if (listing.has_passport){
+        return { success: false, error: "Listing request already has a passport. No need to mint-list." };
+      }
+
+      const owner_address = listing.owner_address
+
+      validateWalletAddress(adminWalletAddress, "admin wallet address");
+      validateImageFile(imageFile);
+
+      const productName = validateRequiredString(body.productName, "productName");
+      const brand = validateRequiredString(body.brand, "brand");
+      const category = validateRequiredString(body.category, "category");
+      const serialNumber = validateRequiredString(body.serialNumber, "serialNumber");
+      const manufacturingDate = validateRequiredString(
+        body.manufacturingDate,
+        "manufacturingDate"
+      );
+      const countryOfOrigin = validateRequiredString(
+        body.countryOfOrigin,
+        "countryOfOrigin"
+      );
+      const description = validateRequiredString(body.description, "description");
+      const materials = parseMaterials(body.materials);
+
+      if (materials.length === 0) {
+        throw new Error("At least one material is required.");
+      }
+
+      const normalizedOwnerAddress = normalizeAddress(owner_address);
+      const normalizedRegistryAddress = normalizeAddress(REGISTRY_ADDRESS);
+      const serialPlainBytes = Array.from(Buffer.from(serialNumber, "utf8"));
+
+      // Ensure one-time on-chain passport resources exist before mint payload is used.
+      await ensurePassportInfrastructureInitialized();
+
+      const imageUpload = await uploadImageToPinata(imageFile);
+
+      const metadata = buildPassportMetadata({
+        productName,
+        brand,
+        category,
+        serialNumber,
+        manufacturingDate,
+        materials,
+        countryOfOrigin,
+        description,
+        imageIpfsUri: imageUpload.ipfsUri,
+      });
+
+      const metadataUpload = await uploadMetadataToPinata(metadata);
+      // Keep hash bytes aligned with uploaded JSON payload formatting.
+      const metadataJson = JSON.stringify(metadata, null, 2);
+      const metadataBytes = Array.from(Buffer.from(metadataJson, "utf8"));
+
+      const payload = buildMintListPayload({
+        registryAddress: normalizedRegistryAddress,
+        ownerAddress: normalizedOwnerAddress,
+        metadataIpfsUri: metadataUpload.ipfsUri,
+        serialPlainBytes,
+        metadataBytes,
+        placeholderAddress: body.tempObjectAddress
+      });
+
+      return {
+        success: true,
+        imageCid: imageUpload.cid,
+        imageIpfsUri: imageUpload.ipfsUri,
+        metadataCid: metadataUpload.cid,
+        metadataIpfsUri: metadataUpload.ipfsUri,
+        metadata,
+        payload,
+      };
+    }catch{
+      return { success: false, error: "Minting for new listed passport failed" };
+    }
+  },
+
+  async recordMintListPassport(params:{
+    body: RecordMintListRequestBody
+  }): Promise<RecordMintListResponse> {
+    const { body } = params;
+
+    if (!body.txHash || typeof body.txHash !== "string" || !body.txHash.startsWith("0x")) {
+      return { success: false, error: "Invalid transaction hash." };
+    }
+
+    validateWalletAddress(body.passportObjectAddress, "passport object address");
+
+    const response = await fetch(`${FULLNODE_URL}/transactions/by_hash/${body.txHash}`);
+
+    if (!response.ok) {
+      return { success: false, error: "Transaction not found on chain." };
+    }
+
+    const tx = (await response.json()) as {
+      type: string;
+      success: boolean;
+      payload?: { function?: string };
+    };
+
+    if (tx.type !== "user_transaction") {
+      return { success: false, error: "Transaction is not a user transaction." };
+    }
+
+    if (!tx.success) {
+      return { success: false, error: "Transaction did not succeed on chain." };
+    }
+
+    const fnName = tx.payload?.function?.toLowerCase() ?? "";
+    if (fnName !== PASSPORT_MINTLIST_FN.toLowerCase()) {
+      return { success: false, error: "Transaction is not a mint_list passport transaction." };
+    }
+
+    try {
+      const normalizedPassportAddr = normalizeAddress(body.passportObjectAddress);
+      // Will update status, has_passport and the real passport address replacing the temp one at the same time
+      // Search will be done on the tempPassport
+      await updateListingRequestPassportAddress(
+        body.tempPassportObjectAddress,
+        normalizeAddress(normalizedPassportAddr),
+      )
+    } catch {
+      // even if it fails cache would be cleared eventually, should log this somewhere though for debugging
+    }
+
+    return { success: true, message: "Minting of listed passport recorded successfully." };
   },
 
   // request by owner to delist the passport from marketplace, would require admin review and action to delist the passport on chain
@@ -1241,137 +1482,20 @@ export const passportListingService = {
     }
 
     // Request to admin to delist the passport, would need to implement some notification system for admin to be alerted of this request
-    // Only admin can sign the transaction to change status not owner.
-    return { success: true, message: "Delist request submitted. Admin will review and delist your passport." };
-  },
-
-  // Sends out the transfer of passport to buyer, callable by owner. Only difference from prepareTransfer would be the listing check
-  async prepareSellPassport(params: {
-    callerWalletAddress: string;
-    body: PrepareSellPassportRequestBody;
-  }): Promise<PrepareSellPassportResponse> {
-    const { callerWalletAddress, body } = params;
-
-    validateWalletAddress(body.passportObjectAddress, "passport object address");
-    validateWalletAddress(body.buyerAddress, "buyer address");
-
-    const normalizedPassportAddr = normalizeAddress(body.passportObjectAddress);
-    const normalizedCaller = normalizeAddress(callerWalletAddress);
-    const normalizedBuyer = normalizeAddress(body.buyerAddress);
-    const normalizedRegistry = normalizeAddress(REGISTRY_ADDRESS);
-
-    let passport: Awaited<ReturnType<typeof getPassport>>;
-    try {
-      passport = await getPassport(aptos, normalizedPassportAddr);
-    } catch {
-      return {
-        success: false,
-        error: "Passport not found. Check the passport object address.",
-      };
-    }
-
-    if (!passport.transferable) {
-      return { success: false, error: "This passport is not transferable." };
-    }
-
-    if (passport.status !== STATUS_LISTING) {
-      return {
-        success: false,
-        error: "Passport must be in LISTING status to initiate a sale.",
-      };
-    }
-
-    const onChainOwner = await getPassportOwner(normalizedPassportAddr);
-    if (normalizeAddress(onChainOwner) !== normalizedCaller) {
-      return { success: false, error: "You are not the owner of this passport." };
-    }
-
-    if (normalizedBuyer === normalizedCaller) {
-      return { success: false, error: "Buyer address cannot be the same as the seller address." };
-    }
-
-
-    const payload = buildSellPassportPayload({
+    // Only admin can sign the transaction to change status to returnining not owner.
+    await createDelistRequest({
       passportObjectAddress: normalizedPassportAddr,
-      buyerAddress: normalizedBuyer,
-      registryAddress: normalizedRegistry,
+      requesterAddress: normalizedCaller,
+      fullName: body.fullName,
+      addressLine1: body.addressLine1,
+      addressLine2: body.addressLine2,
+      city: body.city,
+      state: body.state,
+      postalCode: body.postalCode,
+      country: body.country,
     });
 
-    return { success: true, payload };
-  },
-
-  // Used to verify transaction for sell passport successful
-  async recordSellPassport(params: {
-    body: RecordSellPassportRequestBody;
-  }): Promise<RecordSellPassportResponse> {
-    const { body } = params;
-
-    if (!body.txHash || typeof body.txHash !== "string" || !body.txHash.startsWith("0x")) {
-      return { success: false, error: "Invalid transaction hash." };
-    }
-
-    validateWalletAddress(body.passportObjectAddress, "passport object address");
-    validateWalletAddress(body.buyerAddress, "buyer address");
-
-    const response = await fetch(`${FULLNODE_URL}/transactions/by_hash/${body.txHash}`);
-
-    if (!response.ok) {
-      return { success: false, error: "Transaction not found on chain." };
-    }
-
-    const tx = (await response.json()) as {
-      type: string;
-      success: boolean;
-      payload?: { function?: string };
-    };
-
-    if (tx.type !== "user_transaction") {
-      return { success: false, error: "Transaction is not a user transaction." };
-    }
-
-    if (!tx.success) {
-      return { success: false, error: "Transaction did not succeed on chain." };
-    }
-
-    const fnName = tx.payload?.function?.toLowerCase() ?? "";
-    if (fnName !== PASSPORT_TRANSFER_FN.toLowerCase()) {
-      return { success: false, error: "Transaction is not a transfer transaction." };
-    }
-
-    // Verify on-chain owner now matches the expected buyer address.
-    // If it doesn't, the transfer went to the wrong address — Admin should not proceed.
-    const normalizedPassportAddr = normalizeAddress(body.passportObjectAddress);
-    const normalizedExpectedBuyer = normalizeAddress(body.buyerAddress);
-
-    let onChainOwner: string;
-    try {
-      onChainOwner = await getPassportOwner(normalizedPassportAddr);
-    } catch {
-      return {
-        success: false,
-        error: "Could not verify on-chain ownership after transfer.",
-      };
-    }
-
-    if (normalizeAddress(onChainOwner) !== normalizedExpectedBuyer) {
-      return {
-        success: false,
-        error: "On-chain owner does not match expected buyer address. Transfer may have gone to wrong address.",
-      };
-    }
-
-    // Invalidate issuer product cache (best-effort)
-    try {
-      const passport = await getPassport(aptos, normalizedPassportAddr);
-      clearIssuerProductsFromStore(passport.issuer);
-    } catch {
-      // best-effort
-    }
-
-    return {
-      success: true,
-      message: "Transfer verified. Buyer address confirmed.",
-    };
+    return { success: true, message: "Delist request submitted. Admin will review and delist your passport." };
   },
 
   // Prepares the transaction to confirm receipt of product and set status back to active (Owner)
@@ -1454,15 +1578,53 @@ export const passportListingService = {
       return { success: false, error: "Transaction is not a set_status transaction." };
     }
 
-    // Invalidate issuer product cache (best-effort)
+    // update database to close the delist request and set listing status to returned
     try {
       const passport = await getPassport(aptos, normalizeAddress(body.passportObjectAddress));
+      await updateDelistRequestStatus(normalizeAddress(body.passportObjectAddress), "closed")
+      await updateListingRequestStatus(normalizeAddress(body.passportObjectAddress), "returned")
       clearIssuerProductsFromStore(passport.issuer);
     } catch {
       // best-effort
     }
 
     return { success: true, message: "Receipt confirmed. Passport is now active." };
+  },
+
+  // Marks the delist request as processed, called by admin after confirming shipping address
+  async markDelistProcessed(params: {
+    callerRole: "ADMIN";
+    passportObjectAddress: string;
+  }): Promise<PrepareSetStatusResponse> {
+    const { passportObjectAddress } = params;
+
+    validateWalletAddress(passportObjectAddress, "passport object address");
+
+    const normalizedPassportAddr = normalizeAddress(passportObjectAddress);
+
+    const existing = await getDelistRequest(normalizedPassportAddr);
+    if (!existing) {
+      return {
+        success: false,
+        error: "No delist request found for this passport.",
+      };
+    }
+
+    if (existing.status === "processed") {
+      return {
+        success: false,
+        error: "Delist request has already been processed.",
+      };
+    }
+
+    const payload = buildSetStatusPayload(
+      {
+        passportObjectAddress: normalizedPassportAddr,
+        registryAddress: normalizeAddress(REGISTRY_ADDRESS),
+        newStatus: STATUS_RETURNING,
+      }
+    )
+    return { success: true, payload: payload };
   },
 };
 
@@ -1471,9 +1633,10 @@ export const passportListingService = {
 /*
   To do Marketplace:
     Add in services at admin for status changes
+
     Setup database to store the listings
-      - Listing would include passportObjectAddr, shippingAddress and Status
-      - Status would be "Storing", "Verifying", "Listing", "Returning", "Delisted"
+      - Listing would include listing number, passportObjectAddr, shippingAddress, Status and have_Passport
+      - Status would be "Storing", "Verifying", "Listing", "Request Return", "Returning", "Delisted"
     Workflow
       - When user lists create a new listing with status "Storing", if have existing passport have user initiate transaction to list passport
       - Admin when receiving the product for existing passport would call update_status to "Verifying" else just update the status in the database

@@ -11,11 +11,14 @@ import type {
   PrepareListPassportRequestBody,
   RecordListPassportRequestBody,
   RequestDelistRequestBody,
-  PrepareSellPassportRequestBody,
-  RecordSellPassportRequestBody,
   PrepareConfirmReceiptRequestBody,
   RecordConfirmReceiptRequestBody,
+  UpdateNoPassportListingRequestBody,
+  PrepareMintListPassportRequestBody,
+  RecordMintListRequestBody,
+  PrepareMarketplaceSetStatusRequestBody,
 } from "../types/passport.types";
+import { STATUS_LISTING, STATUS_VERIFYING } from "../../../chains/luxpass/constants";
 
 function normalizeByteVectorLike(value: unknown): unknown {
   if (ArrayBuffer.isView(value)) {
@@ -510,6 +513,249 @@ export async function recordListPassportHandler(req: Request, res: Response) {
   }
 }
 
+export async function receivePassportHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const body = req.body as PrepareSetStatusRequestBody;
+
+    if (!body.passportObjectAddress ) {
+      return res.status(400).json({
+        success: false,
+        error: "passportObjectAddress required.",
+      });
+    }
+
+    body.newStatus = STATUS_VERIFYING
+
+    const result = await passportListingService.prepareSetStatus({
+      callerWalletAddress: req.user.walletAddress,
+      callerRole: req.user.role,
+      body,
+    });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] prepare set status failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to prepare set status to verifying.",
+    });
+  }
+}
+
+export async function verifyPassportHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const body = req.body as PrepareSetStatusRequestBody;
+
+    if (!body.passportObjectAddress ) {
+      return res.status(400).json({
+        success: false,
+        error: "passportObjectAddress required.",
+      });
+    }
+
+    body.newStatus = STATUS_LISTING
+
+    const result = await passportListingService.prepareSetStatus({
+      callerWalletAddress: req.user.walletAddress,
+      callerRole: req.user.role,
+      body,
+    });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] prepare set status failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to prepare set status to listing.",
+    });
+  }
+}
+
+export async function requestListingNoPassport(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const result = await passportListingService.submitListingRequest({
+      callerWalletAddress: req.user.walletAddress,
+    });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] listing request (no-passport) failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to submit listing request (no-passport).",
+    });
+  }
+}
+
+export async function receiveNoPassportHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const body = req.body as UpdateNoPassportListingRequestBody;
+
+    if (!body.tempObjectAddress || !body.status) {
+      return res.status(400).json({
+        success: false,
+        error: "tempObjectAddress and status are required.",
+      });
+    }
+
+    if (body.status !== "verifying"){
+      return res.status(400).json({
+        success: false,
+        error: "Invalid status. Only 'verifying' is allowed.",
+      });
+    }
+
+    const result = await passportListingService.updateNoPassportListingStatus({
+      callerRole: req.user.role,
+      body: body,
+    });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] listing request (no-passport) failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to submit listing request (no-passport).",
+    });
+  }
+}
+
+// Verify no passport handler
+export async function prepareMintListPassportHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const result = await passportListingService.prepareMintListPassport({
+      adminWalletAddress: req.user.walletAddress,
+      body: req.body as PrepareMintListPassportRequestBody,
+      imageFile: req.file,
+    });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    const normalizedPayload = {
+      ...result.payload,
+      functionArguments: result.payload.functionArguments.map((arg) =>
+        normalizeByteVectorLike(arg)
+      ),
+    };
+
+    return res.status(200).json({
+      ...result,
+      payload: normalizedPayload,
+    });
+  } catch (error) {
+    console.error("[passport] prepare mint failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to prepare mint passport payload",
+    });
+  }
+}
+
+export async function recordMintListPassportHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const body = req.body as RecordMintListRequestBody;
+
+    if (!body.txHash || !body.passportObjectAddress || !body.tempPassportObjectAddress || !body.ownerAddress) {
+      return res.status(400).json({
+        success: false,
+        error: "txHash, passportObjectAddress, tempPassportObjectAddress and ownerAddress are required",
+      });
+    }
+
+    const result = await passportListingService.recordListPassport({ body });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] record mint listed passport failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to record mint_list metadata.",
+    });
+  }
+}
+
 // Starts delisting process (sends delist request to admins, can only be done at status Shipping and Listing)
 // Doesn't start anything on chain will be logged by backend, admins will then after approving the request call set_status for it
 export async function requestDelistHandler(req: Request, res: Response) {
@@ -552,8 +798,9 @@ export async function requestDelistHandler(req: Request, res: Response) {
   }
 }
 
-// Transfer to buyer and change status to Sold for listed products
-export async function prepareSellPassportHandler(req: Request, res: Response) {
+// Admin approves delist request and begins processing the delist by setting the passport status to Returning on chain, record set_status will handle the database update
+// Would return set_status payload for admin to sign and send transaction, recordSetStatusHandler would handle the database updating
+export async function approveDelistHandler(req: Request, res: Response) {
   try {
     if (!req.user) {
       return res.status(401).json({
@@ -562,18 +809,18 @@ export async function prepareSellPassportHandler(req: Request, res: Response) {
       });
     }
 
-    const body = req.body as PrepareSellPassportRequestBody;
+    const body = req.body as RequestDelistRequestBody;
 
-    if (!body.passportObjectAddress || !body.buyerAddress) {
+    if (!body.passportObjectAddress) {
       return res.status(400).json({
         success: false,
-        error: "passportObjectAddress and buyerAddress are required.",
+        error: "passportObjectAddress is required.",
       });
     }
 
-    const result = await passportListingService.prepareSellPassport({
-      callerWalletAddress: req.user.walletAddress,
-      body,
+    const result = await passportListingService.markDelistProcessed({
+      callerRole: req.user.role,
+      passportObjectAddress: body.passportObjectAddress,
     });
 
     if (!result.success) {
@@ -582,51 +829,13 @@ export async function prepareSellPassportHandler(req: Request, res: Response) {
 
     return res.status(200).json(result);
   } catch (error) {
-    console.error("[passport] prepare sell passport failed:", error);
+    console.error("[passport] record delist processed failed:", error);
     return res.status(400).json({
       success: false,
       error:
         error instanceof Error
           ? error.message
-          : "Failed to prepare sell passport.",
-    });
-  }
-}
-
-// Records that the transfer to buyer was successful
-export async function recordSellPassportHandler(req: Request, res: Response) {
-  try {
-    if (!req.user) {
-      return res.status(401).json({
-        success: false,
-        error: "Unauthorized",
-      });
-    }
-
-    const body = req.body as RecordSellPassportRequestBody;
-
-    if (!body.txHash || !body.passportObjectAddress || !body.buyerAddress) {
-      return res.status(400).json({
-        success: false,
-        error: "txHash, passportObjectAddress and buyerAddress are required.",
-      });
-    }
-
-    const result = await passportListingService.recordSellPassport({ body });
-
-    if (!result.success) {
-      return res.status(400).json(result);
-    }
-
-    return res.status(200).json(result);
-  } catch (error) {
-    console.error("[passport] record sell passport failed:", error);
-    return res.status(400).json({
-      success: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "Failed to record sell passport.",
+          : "Failed to submit delist update.",
     });
   }
 }

@@ -98,6 +98,7 @@ module luxpass::passport {
     struct PassportListed has drop, store { passport: address, owner: address }
     struct PassportUpdated has drop, store { passport: address, updater: address, new_metadata_uri: String, new_metadata_hash: vector<u8> }
     struct PassportDelisted has drop, store {passport: address, owner: address}
+    struct PassportMintListed has drop, store { passport: address, issuer: address, owner: address, old_address: String }
 
     // Event handles stored under the registry/admin address
     struct PassportEvents has key {
@@ -107,6 +108,7 @@ module luxpass::passport {
         listed: event::EventHandle<PassportListed>,
         updated: event::EventHandle<PassportUpdated>,
         delisted: event::EventHandle<PassportDelisted>,
+        mint_list: event::EventHandle<PassportMintListed>,
     }
 
     // Initialize event streams under the admin/registry address.
@@ -123,6 +125,7 @@ module luxpass::passport {
                 listed: account::new_event_handle<PassportListed>(admin),
                 updated: account::new_event_handle<PassportUpdated>(admin),
                 delisted: account::new_event_handle<PassportDelisted>(admin),
+                mint_list: account::new_event_handle<PassportMintListed>(admin),
             },
         );
     }
@@ -202,9 +205,71 @@ module luxpass::passport {
         // Write mapping serial_key -> passport_addr
         table::add(&mut idx.serial_to_passport, serial_key, passport_addr);
 
-        // Emit mint event
+        // Emit mint list event
         let ev = borrow_global_mut<PassportEvents>(registry_addr);
         event::emit_event(&mut ev.minted, PassportMinted { passport: passport_addr, issuer: issuer_addr, owner });
+    }
+
+    // Mint a new passport Object owned by `owner`. status set to listing For Admin to list verified product for owner
+    // Also writes mapping: serial_key -> passport_object_addr into PassportIndex.
+    public entry fun mint_listing(
+        admin: &signer,
+        registry_addr: address,
+        owner: address,
+        serial_plain: vector<u8>,
+        metadata_uri: String,
+        metadata_bytes: vector<u8>,
+        placeholder_address: String
+    ) acquires PassportEvents, PassportIndex {
+        let admin_addr = signer::address_of(admin);
+        let is_admin = admin_addr == issuer_registry::admin_of(registry_addr);
+        assert!(is_admin, E_NOT_AUTHORIZED);
+
+        assert!(exists<PassportIndex>(registry_addr), E_INDEX_NOT_INITIALIZED);
+        assert!(exists<PassportEvents>(registry_addr), E_EVENTS_NOT_INITIALIZED);
+
+        let (serial_hash, serial_key) = serial_key_from_plain(serial_plain);
+        let metadata_hash = hash::sha3_256(metadata_bytes);
+
+        // Enforce uniqueness: one passport per product id
+        let idx = borrow_global_mut<PassportIndex>(registry_addr);
+        assert!(!table::contains(&idx.serial_to_passport, serial_key), E_DUPLICATE_PRODUCT_ID);
+
+        // Create object owned by `owner`
+        let constructor_ref = object::create_object(owner);
+
+        // Enforce transfer rules
+        let transfer_ref = object::generate_transfer_ref(&constructor_ref);
+        object::disable_ungated_transfer(&transfer_ref);
+
+        let obj_signer = object::generate_signer(&constructor_ref);
+        move_to(&obj_signer, PassportControl { transfer_ref });
+
+        // Store Passport data under the object
+        let obj_signer2 = object::generate_signer(&constructor_ref);
+        move_to(
+            &obj_signer2,
+            Passport {
+                issuer: admin_addr,
+                serial_hash,
+                metadata_uri,
+                metadata_hash,
+                status: STATUS_LISTING,
+                transferable,
+                created_at_secs: timestamp::now_seconds(),
+            },
+        );
+
+        // Get passport object address
+        let obj: Object<ObjectCore> = object::object_from_constructor_ref<ObjectCore>(&constructor_ref);
+        let passport_addr = object::object_address(&obj);
+
+        // Write mapping serial_key -> passport_addr
+        table::add(&mut idx.serial_to_passport, serial_key, passport_addr);
+
+        // Emit mint event
+        let ev = borrow_global_mut<PassportEvents>(registry_addr);
+        event::emit_event(&mut ev.mint_list, PassportMintListed { passport: passport_addr, issuer: admin_addr, owner, old_address: placeholder_address });
     }
 
     // Transfer a passport (only if transferable).
@@ -385,6 +450,12 @@ module luxpass::passport {
     public fun status_deListed_handle(registry_addr: address): (guid::ID, u64) acquires PassportEvents {
         assert!(exists<PassportEvents>(registry_addr), E_EVENTS_NOT_INITIALIZED);
         let h = &borrow_global<PassportEvents>(registry_addr).delisted;
+        (guid::id(event::guid(h)), event::counter(h))
+    }
+
+    public fun passport_mintList_handle(registry_addr: address): (guid::ID, u64) acquires PassportEvents {
+        assert!(exists<PassportEvents>(registry_addr), E_EVENTS_NOT_INITIALIZED);
+        let h = &borrow_global<PassportEvents>(registry_addr).mint_list;
         (guid::id(event::guid(h)), event::counter(h))
     }
 }
