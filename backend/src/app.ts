@@ -78,7 +78,7 @@ export function createApp() {
           
           // marketplace routes
           "POST /api/passports/status/prepare", // (Requires ADMIN/ISSUER)
-          "POST /api/passports/status/record",
+          "POST /api/passports/status/record", // handles the on-chain ADMIN set status requests from the other parts of listing like receive, delist/approve and verify
           "POST /api/passports/metadata/prepare", //(Requires ADMIN/ISSUER, Multipart/Form-Data)
           "POST /api/passports/metadata/record",
           
@@ -95,8 +95,8 @@ export function createApp() {
           "POST /api/passports/verify/passport",// (Requires ADMIN, on-chain status -> listing, sets database listing status -> listed)
           
           // Delisting & Reeceiving of product
-          "POST /api/passports/delist/request", //(Submits DelistRequest with shipping info_
-          "POST /api/passports/delist/approve",// (Requires ADMIN, status -> returning)
+          "POST /api/passports/delist/request", //(Submits DelistRequest with shipping info, listing set to request_return
+          "POST /api/passports/delist/approve",// (Requires ADMIN, status -> returning, after transaction handling by recordSetStatus, sets listing status to returning)
           "POST /api/passports/receipt/prepare",// (Buyer confirms receipt of product, onchain transaction status -> active)
           "POST /api/passports/receipt/record",// (The transaction is confirmed, listing status -> returned, de-listing status -> closed)
           

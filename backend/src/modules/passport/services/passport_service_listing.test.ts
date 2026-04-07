@@ -98,7 +98,9 @@ const mockUpdateListingRequestOwner       = vi.fn();
 const mockUpdateListingRequestPassportAddress = vi.fn();
 const mockUpdateDelistRequestStatus       = vi.fn();
 const mockGetDelistRequest                = vi.fn();
+const mockGetDelistRequestStatus         = vi.fn();
 const mockGetListingRequest               = vi.fn();
+const mockGetListingRequestStatus         = vi.fn();
 
 vi.mock("../repository/listing_repository", () => ({
   createListingRequest:               (...a: unknown[]) => mockCreateListingRequest(...a),
@@ -108,7 +110,9 @@ vi.mock("../repository/listing_repository", () => ({
   updateListingRequestPassportAddress:(...a: unknown[]) => mockUpdateListingRequestPassportAddress(...a),
   updateDelistRequestStatus:          (...a: unknown[]) => mockUpdateDelistRequestStatus(...a),
   getDelistRequest:                   (...a: unknown[]) => mockGetDelistRequest(...a),
+  getDelistRequestsByStatus:          (...a: unknown[]) => mockGetDelistRequestStatus(...a),
   getListingRequest:                  (...a: unknown[]) => mockGetListingRequest(...a),
+  getListingRequestsByStatus:         (...a: unknown[]) => mockGetListingRequestStatus(...a),
 }));
 
 // ─── Mock store + helpers ─────────────────────────────────────────────────────
@@ -137,6 +141,7 @@ global.fetch = vi.fn();
 
 // ─── Import after all mocks ───────────────────────────────────────────────────
 import { passportListingService, passportService } from "./passport.service";
+import { getDelistRequestsByStatus, getListingRequestsByStatus } from "../repository/listing_repository";
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 const PASSPORT_ADDR = "0xpassport";
@@ -810,4 +815,82 @@ describe("recordConfirmReceipt", () => {
     expect(result.success).toBe(false);
     expect((result as { error: string }).error).toMatch(/invalid transaction hash/i);
   });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// getListingByPassportAddress
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("getListingByPassportAddress", () => {
+  it ("returns listing with all fields", async() => {
+    mockGetListingRequest.mockResolvedValue({ id: "d1", passportObjectAddress: PASSPORT_ADDR ,status: "pending" });
+    const result = await passportListingService.getListingByPassportAddress({
+      passportObjectAddress: PASSPORT_ADDR
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.payload.passportObjectAddress).toBe(PASSPORT_ADDR);
+    expect(mockGetListingRequest).toHaveBeenCalledWith({
+      "passportObjectAddress": PASSPORT_ADDR
+    });
+  })
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// getListingsByStatus
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("getListingByStatus", () => {
+  it ("returns listing by status with all fields", async() => {
+    mockGetListingRequestStatus.mockResolvedValue(makePassport([{ id: "d1", passportObjectAddress: PASSPORT_ADDR ,status: "pending" }]));
+    const status = "pending"
+    const result = await passportListingService.getListingsByStatus({
+      status: status
+    }
+    );
+
+    expect(result.success).toBe(true);
+    expect(mockGetListingRequestStatus).toHaveBeenCalledWith({
+      "status": status
+    })
+  })
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// getDelistingByPassportAddress
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("getListingByPassportAddress", () => {
+  it ("returns listing with all fields", async() => {
+    mockGetDelistRequest.mockResolvedValue({ id: "d1", passportObjectAddress: PASSPORT_ADDR ,status: "returned" });
+    const result = await passportListingService.getDeListingRequestByPassportAddress({
+      passportObjectAddress: PASSPORT_ADDR
+    }
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.payload.passportObjectAddress).toBe(PASSPORT_ADDR);
+    expect(mockGetDelistRequest).toHaveBeenCalledWith({
+      "passportObjectAddress": PASSPORT_ADDR
+    });
+  })
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// getDelistingsByStatus
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("getDelistingByStatus", () => {
+  it ("returns de-listing by status with all fields", async() => {
+    mockGetDelistRequestStatus.mockResolvedValue(makePassport([{ id: "d1", passportObjectAddress: PASSPORT_ADDR ,status: "returned" }]));
+    const status = "returned"
+    const result = await passportListingService.getDeListingsByStatus({
+      status: status
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockGetDelistRequestStatus).toHaveBeenCalledWith({
+      "status": status
+    })
+  })
 });

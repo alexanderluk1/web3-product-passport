@@ -919,6 +919,7 @@ export async function recordConfirmReceiptHandler(req: Request, res: Response) {
           : "Failed to record confirm receipt.",
     });
   }
+}
 
 export async function getListingByPassportAddressHandler(req: Request, res: Response) {
     try {
@@ -1074,5 +1075,4 @@ export async function getDelistingsByStatusHandler(req: Request, res: Response) 
             : "Failed to get de-listing request by status.",
       });
     }
-  }
 }

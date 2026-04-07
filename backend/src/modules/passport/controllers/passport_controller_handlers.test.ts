@@ -14,6 +14,10 @@
  *  - approveDelistHandler:           calls markDelistProcessed, passes callerRole from req.user
  *  - prepareConfirmReceiptHandler:   requires passportObjectAddress, passes callerWalletAddress
  *  - recordConfirmReceiptHandler:    requires txHash + passportObjectAddress
+ *  - getListingByPassportAddressHandler: requires passportObjectAddress
+ *  - getListingByStatusHandler: requires status (ListingRequestStatus)
+ *  - getDelistingByPassportAddressHandler: requires passportObjectAddress
+ *  - getDelistingsByStatusHandler: requires status (DelistRequestStatus)
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -29,6 +33,10 @@ const mockRecordMintListPassport        = vi.fn();
 const mockMarkDelistProcessed           = vi.fn();
 const mockPrepareConfirmReceipt         = vi.fn();
 const mockRecordConfirmReceipt          = vi.fn();
+const mockListingByPassportAddress      = vi.fn();
+const mockDelistingByPassportAddress    = vi.fn();
+const mockListingByStatus               = vi.fn();
+const mockDelistingByStatus             = vi.fn();
 
 vi.mock("../services/passport.service", () => ({
   passportService: {},
@@ -42,6 +50,10 @@ vi.mock("../services/passport.service", () => ({
     markDelistProcessed:            (...a: unknown[]) => mockMarkDelistProcessed(...a),
     prepareConfirmReceipt:          (...a: unknown[]) => mockPrepareConfirmReceipt(...a),
     recordConfirmReceipt:           (...a: unknown[]) => mockRecordConfirmReceipt(...a),
+    getListingByPassportAddress: (...a: unknown[]) => mockListingByPassportAddress(...a),
+    getListingsByStatus:         (...a: unknown[]) => mockListingByStatus(...a),
+    getDeListingRequestByPassportAddress: (...a: unknown[]) => mockDelistingByPassportAddress(...a),
+    getDeListingsByStatus:       (...a: unknown[]) => mockDelistingByStatus(...a),
   },
 }));
 
@@ -60,7 +72,11 @@ import {
   approveDelistHandler,
   prepareConfirmReceiptHandler,
   recordConfirmReceiptHandler,
-} from "./passport.controller";
+  getListingByPassportAddressHandler,
+  getListingByStatusHandler,
+  getDelistingByPassportAddressHandler,
+  getDelistingsByStatusHandler,
+} from "./passport.controller.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -866,4 +882,125 @@ describe("recordConfirmReceiptHandler", () => {
       expect.objectContaining({ error: "Chain unreachable" })
     );
   });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// getListingByPassportAddress
+// ══════════════════════════════════════════════════════════════════════════════
+describe("getListingByPassportAddressHandler", () => {
+  const PASSPORT_ADDR = "0xpassport"
+  it("returns 200 and data on success", async () => {
+      const payload = { id: "req_1", passportObjectAddress: PASSPORT_ADDR };
+      mockListingByPassportAddress.mockResolvedValue({ success: true, payload });
+
+      const req = makeReq({ passportObjectAddress: PASSPORT_ADDR });
+      const res = makeRes();
+
+      await getListingByPassportAddressHandler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith({ success: true, payload });
+      expect(mockListingByPassportAddress).toHaveBeenCalledWith({
+        passportObjectAddress: PASSPORT_ADDR
+      });
+    });
+
+    it("returns 400 when passportObjectAddress is missing", async () => {
+      const req = makeReq({});
+      const res = makeRes();
+
+      await getListingByPassportAddressHandler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: "passportObjectAddress is required." }));
+    });
+  });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// getListingByStatus
+// ══════════════════════════════════════════════════════════════════════════════
+describe("getListingByStatusHandler", () => {
+  const STATUS = "pending"
+    it("returns 200 and list on success", async () => {
+      const payload = [{ id: "req_1", status: STATUS }];
+      mockListingByStatus.mockResolvedValue({ success: true, payload });
+
+      const req = makeReq({ status: STATUS });
+      const res = makeRes();
+
+      await getListingByStatusHandler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith({ success: true, payload });
+      expect(mockListingByStatus).toHaveBeenCalledWith({ status: STATUS });
+    });
+
+    it("returns 400 when status is missing", async () => {
+      const req = makeReq({});
+      const res = makeRes();
+
+      await getListingByStatusHandler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: "status is required." }));
+    });
+  });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// getDelistingByStatus
+// ══════════════════════════════════════════════════════════════════════════════
+describe("getDelistingByPassportAddressHandler", () => {
+    const PASSPORT_ADDR = "0xpassport"
+    it("returns 200 and data on success", async () => {
+      const payload = { id: "delist_1", passportObjectAddress: PASSPORT_ADDR };
+      mockDelistingByPassportAddress.mockResolvedValue({ success: true, payload });
+
+      const req = makeReq({ passportObjectAddress: PASSPORT_ADDR });
+      const res = makeRes();
+
+      await getDelistingByPassportAddressHandler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith({ success: true, payload });
+    });
+
+    it("returns 401 when user is not authenticated", async () => {
+      const req = noUserReq({ passportObjectAddress: PASSPORT_ADDR });
+      const res = makeRes();
+
+      await getDelistingByPassportAddressHandler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+    });
+  });
+// ══════════════════════════════════════════════════════════════════════════════
+// getDelistingByPassportAddress
+// ══════════════════════════════════════════════════════════════════════════════
+describe("getDelistingsByStatusHandler", () => {
+    const STATUS = "pending"
+    it("returns 200 and list on success", async () => {
+      const payload = [{ id: "delist_1", status: STATUS }];
+      mockDelistingByStatus.mockResolvedValue({ success: true, payload });
+
+      const req = makeReq({ status: STATUS });
+      const res = makeRes();
+
+      await getDelistingsByStatusHandler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith({ success: true, payload });
+      expect(mockDelistingByStatus).toHaveBeenCalledWith({ status: STATUS });
+    });
+
+    it("returns 400 if service returns success: false", async () => {
+      mockDelistingByStatus.mockResolvedValue({ success: false, error: "Database error" });
+
+      const req = makeReq({ status: STATUS });
+      const res = makeRes();
+
+      await getDelistingsByStatusHandler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: false }));
+    });
 });

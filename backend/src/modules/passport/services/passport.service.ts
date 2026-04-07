@@ -99,7 +99,9 @@ import {
   updateListingRequestPassportAddress,
   ListingRequest,
   getDelistRequestsByStatus,
+  getListingRequestsByStatus,
 } from "../repository/listing_repository";
+import { Result } from "pg";
 
 const aptos = makeAptosClient();
 const FULLNODE_URL =
@@ -1657,36 +1659,41 @@ export const passportListingService = {
   }): Promise<listingRequestReturn> {
 
     try{
-      const result = await getListingRequest(params.passportObjectAddress);
+      const result = await getListingRequest({
+        passportObjectAddress: params.passportObjectAddress
+      });
 
       if (!result) {
         return { 
-          success: false, 
-          error: "No listing request found for this passport address" 
+          success: false,
+          error: "No listing request found for this passport address"
         };
       }
+      return { success: true, payload: result };
     }catch{
       return {success:false, error: "Failed to fetch listing by passport Address"}
     }
-
-    return { success: true, payload: payload };
   },
 
   async getListingsByStatus(params:{status: ListingRequestStatus}): Promise<listingRequestReturnList> {
     try {
-      const list = await getDelistRequestsByStatus(params.status);
+      const list = await getListingRequestsByStatus({
+        status: params.status
+      });
       return { success: true, payload: list };
     } catch (err) {
       return { success: false, error: "Failed to fetch listings by status" };
     }
-  }
+  },
 
   async getDeListingRequestByPassportAddress(params: {
     passportObjectAddress: string
   }): Promise<deListRequestReturn> {
 
     try{
-      const result = await getDelistRequest(params.passportObjectAddress);
+      const result = await getDelistRequest({
+        passportObjectAddress: params.passportObjectAddress
+      });
 
       if (!result) {
         return { 
@@ -1694,21 +1701,22 @@ export const passportListingService = {
           error: "No de listing request found for this passport address" 
         };
       }
+      return { success: true, payload: result };
     }catch{
       return {success:false, error: "Failed to fetch de listing by passport Address"}
     }
-
-    return { success: true, payload: payload };
   },
 
   async getDeListingsByStatus(params:{status: DelistRequestStatus}) {
     try {
-      const list = await getDelistRequestsByStatus(params.status);
+      const list = await getDelistRequestsByStatus({
+        status: params.status
+      });
       return { success: true, payload: list };
     } catch (err) {
       return { success: false, error: "Failed to fetch de-listings by status" };
     }
-  }
+  },
 };
 
 
