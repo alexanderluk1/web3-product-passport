@@ -141,6 +141,10 @@ module luxpass::passport {
         (serial_hash, serial_key)
     }
 
+    fun is_marketplace_status(status: u8): bool{
+        (status == STATUS_STORING || status == STATUS_VERIFYING || status == STATUS_LISTING || status == STATUS_RETURNING)
+    }
+
     // ----------------------
     // Entry functions
     // ----------------------
@@ -255,7 +259,7 @@ module luxpass::passport {
                 metadata_uri,
                 metadata_hash,
                 status: STATUS_LISTING,
-                transferable,
+                transferable: true,
                 created_at_secs: timestamp::now_seconds(),
             },
         );
@@ -343,7 +347,7 @@ module luxpass::passport {
         registry_addr: address,
         new_metadata_uri: String,
         new_metadata_bytes: vector<u8>,
-    ) acquires Passport {
+    ) acquires Passport, PassportEvents {
         let updater_addr = signer::address_of(updater);
         let p = borrow_global_mut<Passport>(passport_addr);
 
@@ -372,8 +376,8 @@ module luxpass::passport {
         let is_admin = caller_addr == issuer_registry::admin_of(registry_addr);
         let is_issuer = caller_addr == p.issuer;
         assert!(is_admin || is_issuer, E_NOT_AUTHORIZED);
-        assert!((p.status != STATUS_LISTING && p.status != STATUS_STORING && p.status != STATUS_VERIFYING && p.status != STATUS_RETURNING) || is_admin, E_PASSPORT_LISTED); // Admin can change status of marketplace statuses, Issuer cannot
-        assert!(is_admin || new_status != STATUS_LISTING, E_NOT_AUTHORIZED); // Issuer cannot set listing status
+        assert!(!is_marketplace_status(p.status) || is_admin, E_PASSPORT_LISTED); // Admin can change status of marketplace statuses, Issuer cannot
+        assert!(is_admin || !is_marketplace_status(new_status), E_NOT_AUTHORIZED); // Issuer cannot set marketplace status
 
         let old = p.status;
         p.status = new_status;

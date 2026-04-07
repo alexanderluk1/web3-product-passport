@@ -1,3 +1,5 @@
+import { DelistRequest, DelistRequestStatus, ListingRequest, ListingRequestStatus } from "../repository/listing_repository";
+
 export type PrepareMintPassportRequestBody = {
     ownerAddress: string;
     productName: string;
@@ -392,3 +394,59 @@ export type RecordMintListResponse =
 export type PrepareMarketplaceSetStatusRequestBody = {
     passportObjectAddress: string;
 };
+
+export type getListingByPassportAddressBody = {
+  passportObjectAddress: string;
+}
+
+export type getListingsByStatus = {
+    status: ListingRequestStatus
+}
+
+export type getDelistingsByStatus = {
+  status: DelistRequestStatus
+}
+
+export type listingRequestReturn = {
+  | {
+    success: true;
+    payload: ListingRequest;
+  }
+| {
+    success: false;
+    error: string;
+  }
+}
+
+export type listingRequestReturnList = {
+  | {
+    success: true;
+    payload: ListingRequest[];
+  }
+| {
+    success: false;
+    error: string;
+  }
+}
+
+export type deListRequestReturn = {
+  | {
+    success: true;
+    payload: DelistRequest;
+  }
+| {
+    success: false;
+    error: string;
+  }
+}
+
+export type deListRequestReturnList = {
+  | {
+    success: true;
+    payload: DelistRequest[];
+  }
+| {
+    success: false;
+    error: string;
+  }
+}

@@ -42,6 +42,11 @@ import {
   PrepareMintListPassportRequestBody,
   RecordMintListRequestBody,
   RecordMintListResponse,
+  listingRequestReturn,
+  listingRequestReturnList,
+  deListRequestReturn,
+  getListingByPassportAddressBody,
+  getListingsByStatus,
 } from "../types/passport.types";
 import { normalizeAddress, validateWalletAddress } from "../../../utils/walletHelper";
 import {
@@ -92,6 +97,8 @@ import {
   DelistRequestStatus,
   getListingRequest,
   updateListingRequestPassportAddress,
+  ListingRequest,
+  getDelistRequestsByStatus,
 } from "../repository/listing_repository";
 
 const aptos = makeAptosClient();
@@ -1491,16 +1498,28 @@ export const passportListingService = {
 
     // Request to admin to delist the passport
     // Only admin can sign the transaction to change status to returnining, not owner.
-    await createDelistRequest({
-      passportObjectAddress: normalizedPassportAddr,
-      requesterAddress: normalizedCaller,
-      addressLine1: body.addressLine1,
-      addressLine2: body.addressLine2,
-      city: body.city,
-      state: body.state,
-      postalCode: body.postalCode,
-      country: body.country,
-    });
+    try{
+      const passportObjectAddress = normalizedPassportAddr
+      await createDelistRequest({
+        passportObjectAddress,
+        requesterAddress: normalizedCaller,
+        addressLine1: body.addressLine1,
+        addressLine2: body.addressLine2,
+        city: body.city,
+        state: body.state,
+        postalCode: body.postalCode,
+        country: body.country,
+      });
+      
+      const status = "request_return"
+
+      await updateListingRequestStatus(
+        passportObjectAddress,
+        status
+      )
+    }catch (error) {
+      return {success:false, message:"Delist request failed to submit."}
+    }
 
     return { success: true, message: "Delist request submitted. Admin will review and delist your passport." };
   },
@@ -1631,6 +1650,65 @@ export const passportListingService = {
     )
     return { success: true, payload: payload };
   },
+
+  // Get single listing by passportObjectAddress
+  async getListingByPassportAddress(params: {
+    passportObjectAddress: string;
+  }): Promise<listingRequestReturn> {
+
+    try{
+      const result = await getListingRequest(params.passportObjectAddress);
+
+      if (!result) {
+        return { 
+          success: false, 
+          error: "No listing request found for this passport address" 
+        };
+      }
+    }catch{
+      return {success:false, error: "Failed to fetch listing by passport Address"}
+    }
+
+    return { success: true, payload: payload };
+  },
+
+  async getListingsByStatus(params:{status: ListingRequestStatus}): Promise<listingRequestReturnList> {
+    try {
+      const list = await getDelistRequestsByStatus(params.status);
+      return { success: true, payload: list };
+    } catch (err) {
+      return { success: false, error: "Failed to fetch listings by status" };
+    }
+  }
+
+  async getDeListingRequestByPassportAddress(params: {
+    passportObjectAddress: string
+  }): Promise<deListRequestReturn> {
+
+    try{
+      const result = await getDelistRequest(params.passportObjectAddress);
+
+      if (!result) {
+        return { 
+          success: false, 
+          error: "No de listing request found for this passport address" 
+        };
+      }
+    }catch{
+      return {success:false, error: "Failed to fetch de listing by passport Address"}
+    }
+
+    return { success: true, payload: payload };
+  },
+
+  async getDeListingsByStatus(params:{status: DelistRequestStatus}) {
+    try {
+      const list = await getDelistRequestsByStatus(params.status);
+      return { success: true, payload: list };
+    } catch (err) {
+      return { success: false, error: "Failed to fetch de-listings by status" };
+    }
+  }
 };
 
 

@@ -16,6 +16,9 @@ import type {
   UpdateNoPassportListingRequestBody,
   PrepareMintListPassportRequestBody,
   RecordMintListRequestBody,
+  getListingByPassportAddressBody,
+  getListingsByStatus,
+  getDelistingsByStatus,
 } from "../types/passport.types";
 import { STATUS_LISTING, STATUS_VERIFYING } from "../../../chains/luxpass/constants";
 
@@ -915,5 +918,161 @@ export async function recordConfirmReceiptHandler(req: Request, res: Response) {
           ? error.message
           : "Failed to record confirm receipt.",
     });
+  }
+
+export async function getListingByPassportAddressHandler(req: Request, res: Response) {
+    try {
+      if (!req.user) {
+        return res.status(401).json({
+          success: false,
+          error: "Unauthorized",
+        });
+      }
+  
+      const body = req.body as getListingByPassportAddressBody;
+  
+      if (!body.passportObjectAddress) {
+        return res.status(400).json({
+          success: false,
+          error: "passportObjectAddress is required.",
+        });
+      }
+  
+      const result = await passportListingService.getListingByPassportAddress({
+        passportObjectAddress: body.passportObjectAddress,
+      });
+  
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+  
+      return res.status(200).json(result);
+    } catch (error) {
+      console.error("[passport] get listing request by passport address failed:", error);
+      return res.status(400).json({
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to get listing request by passport address.",
+      });
+    }
+  }
+
+export async function getListingByStatusHandler(req: Request, res: Response) {
+    try {
+      if (!req.user) {
+        return res.status(401).json({
+          success: false,
+          error: "Unauthorized",
+        });
+      }
+  
+      const body = req.body as getListingsByStatus;
+  
+      if (!body.status) {
+        return res.status(400).json({
+          success: false,
+          error: "status is required.",
+        });
+      }
+  
+      const result = await passportListingService.getListingsByStatus({
+        status: body.status,
+      });
+  
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+  
+      return res.status(200).json(result);
+    } catch (error) {
+      console.error("[passport] get listing request by status failed:", error);
+      return res.status(400).json({
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to get listing request by status.",
+      });
+    }
+  }
+
+export async function getDelistingByPassportAddressHandler(req: Request, res: Response) {
+    try {
+      if (!req.user) {
+        return res.status(401).json({
+          success: false,
+          error: "Unauthorized",
+        });
+      }
+  
+      const body = req.body as getListingByPassportAddressBody;
+  
+      if (!body.passportObjectAddress) {
+        return res.status(400).json({
+          success: false,
+          error: "passportObjectAddress is required.",
+        });
+      }
+  
+      const result = await passportListingService.getDeListingRequestByPassportAddress({
+        passportObjectAddress: body.passportObjectAddress,
+      });
+  
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+  
+      return res.status(200).json(result);
+    } catch (error) {
+      console.error("[passport] get de-listing request by passport address failed:", error);
+      return res.status(400).json({
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to get de-listing request by passport address.",
+      });
+    }
+  }
+
+export async function getDelistingsByStatusHandler(req: Request, res: Response) {
+    try {
+      if (!req.user) {
+        return res.status(401).json({
+          success: false,
+          error: "Unauthorized",
+        });
+      }
+  
+      const body = req.body as getDelistingsByStatus;
+  
+      if (!body.status) {
+        return res.status(400).json({
+          success: false,
+          error: "status is required.",
+        });
+      }
+  
+      const result = await passportListingService.getDeListingsByStatus({
+        status: body.status,
+      });
+  
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+  
+      return res.status(200).json(result);
+    } catch (error) {
+      console.error("[passport] get de-listing request by status failed:", error);
+      return res.status(400).json({
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to get de-listing request by status.",
+      });
+    }
   }
 }

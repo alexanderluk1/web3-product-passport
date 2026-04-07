@@ -25,6 +25,10 @@ import {
   verifyPassportHandler,
   prepareMintListPassportHandler,
   recordMintListPassportHandler,
+  getListingByPassportAddressHandler,
+  getListingByStatusHandler,
+  getDelistingByPassportAddressHandler,
+  getDelistingsByStatusHandler
 } from "../controllers/passport.controller";
 import { requireAuth } from "../../auth/middleware/requireAuth";
 import { requireRole } from "../../auth/middleware/requireRole";
@@ -160,3 +164,23 @@ passportRouter.post("/receipt/record",
     requireAuth,
     recordConfirmReceiptHandler
 );
+
+passportRouter.post("/listings/getByPassportAddress",
+    requireAuth,
+    getListingByPassportAddressHandler
+)
+
+passportRouter.post("/listings/getByStatus",
+    requireAuth,
+    getListingByStatusHandler
+)
+
+passportRouter.post("/de-listings/getByPassportAddress",
+    requireAuth,
+    getDelistingByPassportAddressHandler
+)
+
+passportRouter.post("/de-listings/getByStatus",
+    requireAuth,
+    getDelistingsByStatusHandler
+)
