@@ -102,18 +102,18 @@ passportRouter.post("/list/passport-record",
     recordListPassportHandler
 );
 
-passportRouter.post("/list/no-passport",
+passportRouter.post("/list/no-passport-record",
     requireAuth,
     requestListingNoPassport
 );
 
-passportRouter.post("/receiver/no-passport",
+passportRouter.post("/receive/no-passport",
     requireAuth,
     requireRole("ADMIN"),
     receiveNoPassportHandler
 )
 
-passportRouter.post("/receiver/passport",
+passportRouter.post("/receive/passport",
     requireAuth,
     requireRole("ADMIN"),
     receivePassportHandler

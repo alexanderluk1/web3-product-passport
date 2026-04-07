@@ -16,7 +16,6 @@ import type {
   UpdateNoPassportListingRequestBody,
   PrepareMintListPassportRequestBody,
   RecordMintListRequestBody,
-  PrepareMarketplaceSetStatusRequestBody,
 } from "../types/passport.types";
 import { STATUS_LISTING, STATUS_VERIFYING } from "../../../chains/luxpass/constants";
 
@@ -737,7 +736,7 @@ export async function recordMintListPassportHandler(req: Request, res: Response)
       });
     }
 
-    const result = await passportListingService.recordListPassport({ body });
+    const result = await passportListingService.recordMintListPassport({ body });
 
     if (!result.success) {
       return res.status(400).json(result);

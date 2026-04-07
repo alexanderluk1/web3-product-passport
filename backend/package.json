@@ -7,7 +7,9 @@
     "dev": "tsx watch --env-file=.env src/server.ts",
     "start": "tsx --env-file=.env src/server.ts",
     "build": "tsc",
-    "start:dist": "node dist/server.js"
+    "start:dist": "node dist/server.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [],
   "author": "",
@@ -19,14 +21,15 @@
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
-    "multer": "^2.1.1",
-    "pinata": "^2.5.5",
     "knex": "^3.1.0",
-    "pg": "^8.13.0"
+    "multer": "^2.1.1",
+    "pg": "^8.13.0",
+    "pinata": "^2.5.5",
+    "vitest": "^4.1.2"
   },
   "devDependencies": {
     "@types/multer": "^2.1.0",
-    "tsx": "^4.21.0",
-    "@types/pg": "^8.11.0"
+    "@types/pg": "^8.11.0",
+    "tsx": "^4.21.0"
   }
 }

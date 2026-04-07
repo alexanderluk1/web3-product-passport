@@ -85,7 +85,7 @@ export async function createListingRequest(
 
         const placeholder = buildPlaceholderAddress(owner_address, id);
 
-        const [{ row }] = await db("listing_requests")
+        const [row] = await db("listing_requests")
           .insert({
             passport_object_address: placeholder,
             owner_address: owner_address,

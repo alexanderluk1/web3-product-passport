@@ -357,6 +357,10 @@ function isValidStatus(status: number): boolean {
   return [STATUS_ACTIVE, STATUS_SUSPENDED, STATUS_REVOKED, STATUS_STORING, STATUS_VERIFYING, STATUS_LISTING, STATUS_RETURNING].includes(status);
 }
 
+function isMarketPlaceStatus(status: number): boolean{
+  return [STATUS_STORING,STATUS_LISTING,STATUS_VERIFYING,STATUS_RETURNING].includes(status)
+}
+
 function isCacheFresh(syncedAt: number): boolean {
   return Date.now() - syncedAt < PRODUCT_CACHE_TTL_MS;
 }
@@ -901,7 +905,7 @@ export const passportListingService = {
     }
 
     // Issuer blocked while passport is listed — Admin must cancel the marketplace status first
-    if ((passport.status === STATUS_STORING || passport.status === STATUS_VERIFYING || passport.status === STATUS_LISTING || passport.status === STATUS_RETURNING)
+    if ((isMarketPlaceStatus(passport.status))
         && callerRole !== "ADMIN") {
       return {
         success: false,
@@ -943,6 +947,10 @@ export const passportListingService = {
       payload?: { function?: string };
     };
 
+    if (!tx){
+      return { success: false, error: "Chain returned an empty block" };
+    }
+
     if (tx.type !== "user_transaction") {
       return { success: false, error: "Transaction is not a user transaction." };
     }
@@ -959,14 +967,14 @@ export const passportListingService = {
     // Check if new status is marketplace status and if it is update listing request status in DB, if fails log and move on
     try {
       const passport = await getPassport(aptos, normalizeAddress(body.passportObjectAddress));
-      if (passport.status === STATUS_LISTING || passport.status === STATUS_STORING || passport.status === STATUS_VERIFYING || passport.status === STATUS_RETURNING){
+      if (isMarketPlaceStatus(passport.status)){
         const listing_status = listingStatusMap[passport.status]
         await updateListingRequestStatus(normalizeAddress(body.passportObjectAddress), listing_status)
         if (passport.status === STATUS_RETURNING){
           await updateDelistRequestStatus(normalizeAddress(body.passportObjectAddress), "closed")
         }
       }
-    } catch {
+    } catch{
       // logging goes here
     }
 
@@ -1397,6 +1405,10 @@ export const passportListingService = {
       payload?: { function?: string };
     };
 
+    if (!tx) {
+      return { success: false, error: "Empty response from blockchain node." };
+    }
+
     if (tx.type !== "user_transaction") {
       return { success: false, error: "Transaction is not a user transaction." };
     }
@@ -1463,9 +1475,6 @@ export const passportListingService = {
     }
 
     if (passport.status === STATUS_LISTING) {
-      if (!body.fullName?.trim()) {
-        return { success: false, error: "Full name is required." };
-      }
       if (!body.addressLine1?.trim()) {
         return { success: false, error: "Address line 1 is required." };
       }
@@ -1478,15 +1487,13 @@ export const passportListingService = {
       if (!body.country?.trim()) {
         return { success: false, error: "Country is required." };
       }
-      // Then save the shipping address here
     }
 
-    // Request to admin to delist the passport, would need to implement some notification system for admin to be alerted of this request
-    // Only admin can sign the transaction to change status to returnining not owner.
+    // Request to admin to delist the passport
+    // Only admin can sign the transaction to change status to returnining, not owner.
     await createDelistRequest({
       passportObjectAddress: normalizedPassportAddr,
       requesterAddress: normalizedCaller,
-      fullName: body.fullName,
       addressLine1: body.addressLine1,
       addressLine2: body.addressLine2,
       city: body.city,
@@ -1580,10 +1587,8 @@ export const passportListingService = {
 
     // update database to close the delist request and set listing status to returned
     try {
-      const passport = await getPassport(aptos, normalizeAddress(body.passportObjectAddress));
       await updateDelistRequestStatus(normalizeAddress(body.passportObjectAddress), "closed")
       await updateListingRequestStatus(normalizeAddress(body.passportObjectAddress), "returned")
-      clearIssuerProductsFromStore(passport.issuer);
     } catch {
       // best-effort
     }
@@ -1631,19 +1636,56 @@ export const passportListingService = {
 
 
 /*
-  To do Marketplace:
-    Add in services at admin for status changes
+  Workflow:
+  User has 2 options, List product with passport, list product without passport
+    Each option will have its own url endpoint.
+    With passport endpoints: /list/passport-prepare and /list/passport-record
+      list passport will reutrn payload that user will have to sign using their wallet to transfer the passport
+        At record confirming the set_status update the database entry be created
+    Without passport endpoint: /list/no-passport-record
+        Without passport, create database entry for listing_request
 
-    Setup database to store the listings
-      - Listing would include listing number, passportObjectAddr, shippingAddress, Status and have_Passport
-      - Status would be "Storing", "Verifying", "Listing", "Request Return", "Returning", "Delisted"
-    Workflow
-      - When user lists create a new listing with status "Storing", if have existing passport have user initiate transaction to list passport
-      - Admin when receiving the product for existing passport would call update_status to "Verifying" else just update the status in the database
-      - After verification, Admin would then for existing passport call update_status to "Listing" or mint new passport then give it to owner with status "Listing"
-        No matter what the database status would change to listing
-      - User if status is storing can request cancellation of listing, if at listing would need to provide shipping address for return
-        Return address would be stored in the database and Admin upon confirmation of return address would set_status("Returning") and change database to "Returning"
-      - User would then confirm receipt of product and call delist to set status back to active and remove listing from database
-    Transfer of listed passports would be allowed, no need for admin confirmation. Admin would just be holding the product in storage
+  Admin when product arrives
+    Each option will have own backend url endpoint
+    With passport endpoints: /receive/passport
+      With passport immediately update the on-chain and database statuses to verifying
+      recording would be done through standard set_status record: /status/record
+    Without passport endpoints: /receive/no-passport
+        Without passport, only update the database status of listing
+
+  Admin after product verification
+    Each option will have own url endpoint
+    Without passport, mint the passport and transfer it to user at specified wallet address
+      Set passport status to listing first
+      Then update the database status and passport address of on-chain listing
+    With passport, use set_status to set passport to listing
+
+  Admin when passport is transferred during listing,
+    Use normal passport transfer.
+    Would use a if passport.status listing update the listing owner_address in record_transaction workflow
+
+  User when user wants product returned
+    Uses endpoint: /delist/request
+      User sends shipping address along with passport address
+      This would create a delist_request
+
+  Admin when user requests return
+    Uses endpoint: /delist/approve
+      Set passport status to returning update and update the database for listing and return table status
+  
+  User receives product back
+    Uses endpoint: /receipt/prepare and /receipt/record
+      /receipt/prepare: Uses recordConfirmPassportReturn, gets back a transaction to sign
+      /receipt/record: on-chain the passport status would be set back to active
+        return request and listing status is updated to close both with status closed and returned respectively
+
+  passport functions added
+    mint_list, mint function but status is set to always transferable and status is listing
+      Only available to admin
+    set_status, allows issuer or admin to set the status of passports
+    update_metatdata, allows issuer or admint to set new metadata hash and link in the passport
+    list_passport, allows user to set their own passports to status Storing to indicate start of listing process
+    delist_passport, allows user to return their passport from status Returning to Active to indicate end of de-lisitng process
+
+  
 */
