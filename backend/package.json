@@ -17,6 +17,7 @@
   "type": "module",
   "dependencies": {
     "@aptos-labs/ts-sdk": "^6.1.0",
+    "aptos": "^1.22.1",
     "better-sqlite3": "^12.8.0",
     "crypto": "^1.0.1",
     "dotenv": "^17.3.1",
@@ -26,6 +27,8 @@
     "multer": "^2.1.1",
     "pg": "^8.13.0",
     "pinata": "^2.5.5",
+    "supertest": "^7.2.2",
+    "typescript": "^5.x.x",
     "vitest": "^4.1.2"
   },
   "devDependencies": {

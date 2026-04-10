@@ -128,19 +128,20 @@ passportRouter.post("/receive/passport",
 // The set status record will handle the final database update for this
 passportRouter.post("/verify/no-passport",
     requireAuth,
-    requireRole("Admin"),
+    requireRole("ADMIN"),
+    upload.single("image"),
     prepareMintListPassportHandler
 )
 
 passportRouter.post("/verify/no-passport-record",
     requireAuth,
-    requireRole("Admin"),
+    requireRole("ADMIN"),
     recordMintListPassportHandler
 )
 
 passportRouter.post("/verify/passport",
     requireAuth,
-    requireRole("Admin"),
+    requireRole("ADMIN"),
     verifyPassportHandler
 )
 

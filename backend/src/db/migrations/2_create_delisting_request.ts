@@ -14,8 +14,7 @@ export async function up(knex: Knex): Promise<void> {
       .inTable("listing_requests")
       .onDelete("CASCADE")
       .notNullable();
-    
-      table.integer('user_id').unsigned().references('id').inTable('users').onDelete('CASCADE');
+
     // On-chain owner address at the time the request was submitted.
     table
       .text("requester_address")

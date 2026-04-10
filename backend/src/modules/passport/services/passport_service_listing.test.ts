@@ -141,7 +141,8 @@ global.fetch = vi.fn();
 
 // ─── Import after all mocks ───────────────────────────────────────────────────
 import { passportListingService, passportService } from "./passport.service";
-import { getDelistRequestsByStatus, getListingRequestsByStatus } from "../repository/listing_repository";
+import { DelistRequestStatus, getDelistRequestsByStatus, getListingRequestsByStatus } from "../repository/listing_repository";
+import { fail } from "node:assert";
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 const PASSPORT_ADDR = "0xpassport";
@@ -192,7 +193,7 @@ describe("recordListPassport", () => {
     );
   });
 
-  it("returns success even if createListingRequest throws (best-effort)", async () => {
+  it("returns false if createListingRequest throws", async () => {
     mockFetch(PASSPORT_LIST_FN);
     mockGetPassportOwner.mockResolvedValue(OWNER_ADDR);
     mockCreateListingRequest.mockRejectedValue(new Error("DB down"));
@@ -201,7 +202,7 @@ describe("recordListPassport", () => {
       body: { txHash: TX_HASH, passportObjectAddress: PASSPORT_ADDR },
     });
 
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
   });
 
   it("returns error for invalid txHash", async () => {
@@ -454,7 +455,7 @@ describe("recordMintListPassport", () => {
     expect((result as { error: string }).error).toMatch(/mint_list/i);
   });
 
-  it("returns success even if updateListingRequestPassportAddress throws (best-effort)", async () => {
+  it("returns failure if updateListingRequestPassportAddress throws", async () => {
     mockFetch(PASSPORT_MINTLIST_FN);
     mockUpdateListingRequestPassportAddress.mockRejectedValue(new Error("DB error"));
 
@@ -467,7 +468,7 @@ describe("recordMintListPassport", () => {
       },
     });
 
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
   });
 
   it("returns error for invalid txHash", async () => {
@@ -786,7 +787,7 @@ describe("recordConfirmReceipt", () => {
     expect(mockUpdateListingRequestStatus).toHaveBeenCalledWith(PASSPORT_ADDR, "returned");
   });
 
-  it("returns success even when DB updates fail (best-effort)", async () => {
+  it("returns failure when DB updates fail", async () => {
     mockFetch(PASSPORT_SET_STATUS_FN);
     mockGetPassport.mockResolvedValue(makePassport());
     mockUpdateDelistRequestStatus.mockRejectedValue(new Error("DB down"));
@@ -795,7 +796,7 @@ describe("recordConfirmReceipt", () => {
       body: { txHash: TX_HASH, passportObjectAddress: PASSPORT_ADDR },
     });
 
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
   });
 
   it("returns error when tx is not a set_status call", async () => {
@@ -830,9 +831,7 @@ describe("getListingByPassportAddress", () => {
 
     expect(result.success).toBe(true);
     expect(result.payload.passportObjectAddress).toBe(PASSPORT_ADDR);
-    expect(mockGetListingRequest).toHaveBeenCalledWith({
-      "passportObjectAddress": PASSPORT_ADDR
-    });
+    expect(mockGetListingRequest).toHaveBeenCalledWith(PASSPORT_ADDR);
   })
 });
 
@@ -844,15 +843,10 @@ describe("getListingByStatus", () => {
   it ("returns listing by status with all fields", async() => {
     mockGetListingRequestStatus.mockResolvedValue(makePassport([{ id: "d1", passportObjectAddress: PASSPORT_ADDR ,status: "pending" }]));
     const status = "pending"
-    const result = await passportListingService.getListingsByStatus({
-      status: status
-    }
-    );
+    const result = await passportListingService.getListingsByStatus(status);
 
     expect(result.success).toBe(true);
-    expect(mockGetListingRequestStatus).toHaveBeenCalledWith({
-      "status": status
-    })
+    expect(mockGetListingRequestStatus).toHaveBeenCalledWith(status);
   })
 });
 
@@ -863,16 +857,11 @@ describe("getListingByStatus", () => {
 describe("getListingByPassportAddress", () => {
   it ("returns listing with all fields", async() => {
     mockGetDelistRequest.mockResolvedValue({ id: "d1", passportObjectAddress: PASSPORT_ADDR ,status: "returned" });
-    const result = await passportListingService.getDeListingRequestByPassportAddress({
-      passportObjectAddress: PASSPORT_ADDR
-    }
-    );
+    const result = await passportListingService.getDeListingRequestByPassportAddress(PASSPORT_ADDR);
 
     expect(result.success).toBe(true);
     expect(result.payload.passportObjectAddress).toBe(PASSPORT_ADDR);
-    expect(mockGetDelistRequest).toHaveBeenCalledWith({
-      "passportObjectAddress": PASSPORT_ADDR
-    });
+    expect(mockGetDelistRequest).toHaveBeenCalledWith(PASSPORT_ADDR);
   })
 });
 
@@ -885,12 +874,10 @@ describe("getDelistingByStatus", () => {
     mockGetDelistRequestStatus.mockResolvedValue(makePassport([{ id: "d1", passportObjectAddress: PASSPORT_ADDR ,status: "returned" }]));
     const status = "returned"
     const result = await passportListingService.getDeListingsByStatus({
-      status: status
+      status: status as DelistRequestStatus
     });
 
     expect(result.success).toBe(true);
-    expect(mockGetDelistRequestStatus).toHaveBeenCalledWith({
-      "status": status
-    })
+    expect(mockGetDelistRequestStatus).toHaveBeenCalledWith(status);
   })
 });

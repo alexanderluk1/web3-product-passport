@@ -1,3 +1,4 @@
+import { stat } from "fs";
 import { db } from "../../../config/db";
 import { createHash } from "crypto";
 
@@ -63,9 +64,44 @@ export type CreateDelistRequestParams = {
 // Builds the placeholder address for listings that don't have a passport yet. Deterministic based on seller address and unique id.
 function buildPlaceholderAddress(sellerAddress: string, id: string): string {
     const hash = createHash("sha256")
-      .update(sellerAddress.toLowerCase() + id)
+      .update(sellerAddress + id)
       .digest("hex");
     return `temp_${hash}`;
+}
+
+// ----------------------
+// Mappers
+// ----------------------
+
+function mapListingRow(row: Record<string, unknown> | undefined): ListingRequest | undefined {
+  if (!row) return undefined;
+  return {
+    id: row.id as string,
+    passport_object_address: row.passport_object_address as string | undefined,
+    owner_address: row.owner_address as string,
+    status: row.status as ListingRequestStatus,
+    has_passport: row.has_passport as boolean,
+    created_at: new Date(row.created_at as string),
+    updated_at: new Date(row.updated_at as string),
+  };
+}
+
+function mapDelistRow(row: Record<string, unknown> | undefined): DelistRequest | undefined {
+  if (!row) return undefined;
+  return {
+    id: row.id as string,
+    passport_object_address: row.passport_object_address as string,
+    requester_address: row.requester_address as string,
+    address_line1: row.address_line1 as string,
+    address_line2: row.address_line2 as string | null,
+    city: row.city as string,
+    state: row.state as string,
+    postal_code: row.postal_code as string,
+    country: row.country as string,
+    status: row.status as DelistRequestStatus,
+    created_at: new Date(row.created_at as string),
+    updated_at: new Date(row.updated_at as string),
+  };
 }
 
 export async function createListingRequest(
@@ -75,77 +111,98 @@ export async function createListingRequest(
 ): Promise<ListingRequest> {
     // Flow for if no passport: first create the listing then generate the placeholder
     if (!has_passport) {
-        const [{id}] = await db("listing_requests").insert({
-            passport_object_address: "temp_address",
-            owner_address: owner_address,
-            has_passport: false,
-            status: "pending",
-            updated_at: db.fn.now(),
-        }).returning("id");
-
-        const placeholder = buildPlaceholderAddress(owner_address, id);
-
+        const newId = crypto.randomUUID();
+        const placeholder = buildPlaceholderAddress(owner_address, newId).trim().toLowerCase();
+        const status_db = "pending" as ListingRequestStatus;
         const [row] = await db("listing_requests")
           .insert({
+            id: newId,
             passport_object_address: placeholder,
             owner_address: owner_address,
             has_passport: false,
-            status: "pending",
+            status: status_db,
             updated_at: db.fn.now(),
           })
           .returning("*");
-
-        return row as ListingRequest;
+    
+        return mapListingRow(row);
       }
+
+  const passportAddress = passportObjectAddress.trim().toLowerCase();
+  const status_db = "pending" as ListingRequestStatus;
   const [row] = await db("listing_requests")
     .insert({
-      passport_object_address: passportObjectAddress,
+      passport_object_address: passportAddress,
       owner_address: owner_address,
       has_passport: true,
-      status: "pending",
+      status: status_db,
       updated_at: db.fn.now(),
     })
     .returning("*");
 
-  return row as ListingRequest;
+  return mapListingRow(row);
 }
 
 export async function getListingRequest(
   passportObjectAddress: string
 ): Promise<ListingRequest | undefined> {
+  if (typeof passportObjectAddress !== 'string') {
+    console.error("Status error: Expected string, received:", typeof passportObjectAddress, passportObjectAddress);
+    return undefined;
+  }
+  const passportAddress = passportObjectAddress.trim().toLowerCase();
   const row = await db("listing_requests")
-    .where("passport_object_address", passportObjectAddress.toLowerCase())
+    .where('passport_object_address', passportAddress)
     .orderBy("created_at", "desc")
     .first();
 
-  return row as ListingRequest | undefined;
+  return mapListingRow(row);
 }
 
 export async function getListingRequestsByStatus(
   status: ListingRequestStatus
-): Promise<ListingRequest[]> {
+): Promise<ListingRequest[] | undefined> {
+  const status_db = status as ListingRequestStatus;
   const rows = await db("listing_requests")
-    .where("status", status)
+    .where("status", status_db)
     .orderBy("created_at", "asc");
 
-  return rows as ListingRequest[];
+  if (!rows || rows.length === 0) {
+    return undefined;
+  }
+
+  return rows.map(mapListingRow);
 }
 
 export async function updateListingRequestStatus(
   passportObjectAddress: string,
   status: ListingRequestStatus
 ): Promise<ListingRequest | undefined> {
-  const [row] = await db("listing_requests")
-    .where("passport_object_address", passportObjectAddress.toLowerCase())
+  if (typeof passportObjectAddress !== 'string') {
+    console.error("Status error: Expected string, received:", typeof passportObjectAddress, passportObjectAddress);
+    return undefined;
+  }
+  const passportObjectAddr = passportObjectAddress.trim().toLowerCase();
+  const id = await db("listing_requests")
+    .where("passport_object_address", passportObjectAddr)
     .orderBy("created_at", "desc")
-    .limit(1)
+    .first("id");
+
+    if (!id) {
+      console.log("Failed to find using passport_object_address with:"+passportObjectAddress);
+      return undefined
+    };
+
+  const status_db = status as ListingRequestStatus;
+  const [row] = await db("listing_requests")
+    .where({ id: id.id })
     .update({
-      status,
+      status: status_db,
       updated_at: db.fn.now(),
     })
     .returning("*");
 
-  return row as ListingRequest | undefined;
+  return mapListingRow(row);
 }
 
 // For updating the owner address after transfer
@@ -153,17 +210,30 @@ export async function updateListingRequestOwner(
   passportObjectAddress: string,
   ownerAddress: string
 ): Promise<ListingRequest | undefined> {
-  const [row] = await db("listing_requests")
-    .where("passport_object_address", passportObjectAddress)
+  if (typeof passportObjectAddress !== 'string') {
+    console.error("Status error: Expected string, received:", typeof passportObjectAddress, passportObjectAddress);
+    return undefined;
+  }
+  const passportObjectAddr = passportObjectAddress.trim().toLowerCase();
+  const id = await db("listing_requests")
+    .where('passport_object_address', passportObjectAddr)
     .orderBy("created_at", "desc")
-    .limit(1)
+    .first("id");
+
+    if (!id) {
+      console.log("Failed to find using passport_object_address with:"+passportObjectAddress);
+      return undefined
+    };
+
+  const [row] = await db("listing_requests")
+    .where({ id: id.id })
     .update({
       owner_address: ownerAddress,
       updated_at: db.fn.now(),
     })
     .returning("*");
 
-  return row as ListingRequest | undefined;
+  return mapListingRow(row);
 }
 
 // For updating the passport object address from placeholder to real one after minting
@@ -171,17 +241,34 @@ export async function updateListingRequestPassportAddress(
     tempObjectAddress: string,
     realPassportObjectAddress: string
   ): Promise<ListingRequest | undefined> {
+    if (typeof tempObjectAddress !== 'string') {
+      console.error("Status error: Expected string, received:", typeof tempObjectAddress, tempObjectAddress);
+      return undefined;
+    }
+    const tempObjectAddr = tempObjectAddress.trim().toLowerCase();
+    const id = await db("listing_requests")
+    .where('passport_object_address', tempObjectAddr)
+    .orderBy("created_at", "desc")
+    .first("id");
+
+    if (!id) {
+      console.log("Failed to find using passport_object_address with:"+tempObjectAddress);
+      return undefined
+    };
+
+    const realObjectAddr = realPassportObjectAddress.trim().toLowerCase();
+    const status_db = "listed" as ListingRequestStatus;
     const [row] = await db("listing_requests")
-      .where("passport_object_address", tempObjectAddress)
+      .where("id", id.id)
       .update({
-        passport_object_address: realPassportObjectAddress,
+        passport_object_address: realObjectAddr,
         has_passport: true,
-        status: "listed",
+        status: status_db,
         updated_at: db.fn.now(),
       })
       .returning("*");
 
-    return row as ListingRequest | undefined;
+    return mapListingRow(row);
   }
 
 // ----------------------
@@ -191,60 +278,90 @@ export async function updateListingRequestPassportAddress(
 export async function createDelistRequest(
   params: CreateDelistRequestParams
 ): Promise<DelistRequest> {
+  if (typeof params.passportObjectAddress !== 'string') {
+    console.error("Status error: Expected string, received:", typeof params.passportObjectAddress, params.passportObjectAddress);
+    return undefined;
+  }
+  const passportObjectAddr = params.passportObjectAddress.trim().toLowerCase();
+  const status_db = "pending" as DelistRequestStatus;
   const [row] = await db("delist_requests")
     .insert({
-      passport_object_address: params.passportObjectAddress.toLowerCase(),
-      requester_address: params.requesterAddress.toLowerCase(),
+      passport_object_address: passportObjectAddr,
+      requester_address: params.requesterAddress,
       address_line1: params.addressLine1,
       address_line2: params.addressLine2 ?? null,
       city: params.city,
       state: params.state,
       postal_code: params.postalCode,
       country: params.country,
-      status: "pending",
+      status: status_db,
       updated_at: db.fn.now(),
     })
     .returning("*");
 
-  return row as DelistRequest;
+  return mapDelistRow(row);
 }
 
 export async function getDelistRequest(
   passportObjectAddress: string
 ): Promise<DelistRequest | undefined> {
+  if (typeof passportObjectAddress !== 'string') {
+    console.error("Status error: Expected string, received:", typeof passportObjectAddress, passportObjectAddress);
+    return undefined;
+  }
+  const passportObjectAddr = passportObjectAddress.trim().toLowerCase();
   const row = await db("delist_requests")
-    .where("passport_object_address", passportObjectAddress.toLowerCase())
+    .where('passport_object_address', passportObjectAddr)
     .orderBy("created_at", "desc")
     .first();
 
-  return row as DelistRequest | undefined;
+  return mapDelistRow(row);
 }
 
 export async function getDelistRequestsByStatus(
   status: DelistRequestStatus
-): Promise<DelistRequest[]> {
+): Promise<DelistRequest[] | undefined> {
+  const status_db = status as DelistRequestStatus;
   const rows = await db("delist_requests")
-    .where("status", status)
+    .where("status", status_db)
     .orderBy("created_at", "asc");
 
-  return rows as DelistRequest[];
+  if (!rows || rows.length === 0) {
+      return undefined;
+  }
+
+  return rows.map(mapDelistRow);
 }
 
 export async function updateDelistRequestStatus(
   passportObjectAddress: string,
   status: DelistRequestStatus
 ): Promise<DelistRequest | undefined> {
-  const [row] = await db("delist_requests")
-    .where("passport_object_address", passportObjectAddress.toLowerCase())
+  if (typeof passportObjectAddress !== 'string') {
+    console.error("Status error: Expected string, received:", typeof passportObjectAddress, passportObjectAddress);
+    return undefined;
+  }
+  const passportObjectAddr = passportObjectAddress.trim().toLowerCase();
+  const id = await db("delist_requests")
+    .where('passport_object_address', passportObjectAddr)
     .orderBy("created_at", "desc")
-    .limit(1)
+    .first("id");
+
+    if (!id) {
+      console.log("Failed to find using passport_object_address with:"+passportObjectAddress);
+      return undefined
+    };
+
+  const status_db = status as DelistRequestStatus;
+  const [row] = await db("delist_requests")
+    .where("id", id.id)
     .update({
-      status,
+      status: status_db,
       updated_at: db.fn.now(),
     })
     .returning("*");
 
-  return row as DelistRequest | undefined;
+  return mapDelistRow(row);
 }
 
 export async function updateDelistRequestAddress(
@@ -256,10 +373,23 @@ export async function updateDelistRequestAddress(
   postal_code: string,
   country: string
 ): Promise<DelistRequest | undefined> {
-  const [row] = await db("delist_requests")
-    .where("passport_object_address", passportObjectAddress.toLowerCase())
+  if (typeof passportObjectAddress !== 'string') {
+    console.error("Status error: Expected string, received:", typeof passportObjectAddress, passportObjectAddress);
+    return undefined;
+  }
+  const passportObjectAddr = passportObjectAddress.trim().toLowerCase();
+  const id = await db("delist_requests")
+    .where('passport_object_address', passportObjectAddr)
     .orderBy("created_at", "desc")
-    .limit(1)
+    .first("id");
+
+    if (!id) {
+      console.log("Failed to find using passport_object_address with:"+passportObjectAddress);
+      return undefined
+    };
+
+  const [row] = await db("delist_requests")
+    .where("id", id.id)
     .update({
       address_line1: address_line1,
       address_line2: address_line2 ?? null,
@@ -271,5 +401,5 @@ export async function updateDelistRequestAddress(
     })
     .returning("*");
 
-  return row as DelistRequest | undefined;
+  return mapDelistRow(row);
 }

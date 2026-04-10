@@ -12,15 +12,32 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  aptos:
+    image: aptoslabs/tools:devnet
+    container_name: aptos_localnet
+    command: aptos node run-local-testnet --with-faucet --faucet-port 8082 --force-restart --assume-yes --bind-to 0.0.0.0
+    ports:
+      - "8080:8080"  # fullnode RPC
+      - "8082:8082"  # faucet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
   backend:
     build: .
     container_name: luxpass_app
     ports:
       - "3000:3000"
+    environment:
+      - ADMIN_PRIVATE_KEY=${ADMIN_PRIVATE_KEY}
     env_file:
       - .env
     depends_on:
       - db
+      - aptos
+    command: >
+      sh -c "NODE_OPTIONS='--import tsx' npx knex migrate:latest --knexfile knexfile.ts && npm start"
 
 volumes:
   postgres_data:

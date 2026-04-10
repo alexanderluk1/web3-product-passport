@@ -10,6 +10,8 @@ export async function up(knex: Knex): Promise<void> {
     // The on-chain passport object address — normalized to lowercase.
     table
       .text("passport_object_address")
+      .unique()
+      .notNullable();
 
     // On-chain owner address at the time the request was submitted.
     table

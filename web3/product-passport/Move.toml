@@ -4,7 +4,7 @@ version = "1.0.0"
 authors = []
 
 [addresses]
-luxpass = "0xc06d173e51c62a15d7b7ca69c3d3fee80b79f69e06153a2cca179ae71d831598"
+luxpass = "_"
 
 [dev-addresses]
 

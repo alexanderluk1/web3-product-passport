@@ -45,8 +45,7 @@ import {
   listingRequestReturn,
   listingRequestReturnList,
   deListRequestReturn,
-  getListingByPassportAddressBody,
-  getListingsByStatus,
+  deListRequestReturnList,
 } from "../types/passport.types";
 import { normalizeAddress, validateWalletAddress } from "../../../utils/walletHelper";
 import {
@@ -980,7 +979,7 @@ export const passportListingService = {
         const listing_status = listingStatusMap[passport.status]
         await updateListingRequestStatus(normalizeAddress(body.passportObjectAddress), listing_status)
         if (passport.status === STATUS_RETURNING){
-          await updateDelistRequestStatus(normalizeAddress(body.passportObjectAddress), "closed")
+          await updateDelistRequestStatus(normalizeAddress(body.passportObjectAddress), "returning" as DelistRequestStatus)
         }
       }
     } catch{
@@ -1228,19 +1227,20 @@ export const passportListingService = {
       return { success: false, error: "Transaction is not a list_passport transaction." };
     }
 
+    const normalizedPassportAddr = normalizeAddress(body.passportObjectAddress);
     try {
-      const normalizedPassportAddr = normalizeAddress(body.passportObjectAddress);
       const passportOwner = await getPassportOwner(normalizedPassportAddr);
-      await createListingRequest(
+      const result = await createListingRequest(
         true,
         normalizeAddress(passportOwner),
         normalizedPassportAddr,
       )
-    } catch {
-      // even if it fails cache would be cleared eventually, should log this somewhere though for debugging
-    }
 
-    return { success: true, message: "Listing Passport recorded successfully." };
+      return { success: true, message: "Listing Passport recorded successfully.", passportObjectAddress: result.passport_object_address };
+    } catch (err:any){
+      // even if it fails cache would be cleared eventually, should log this somewhere though for debugging
+      return {success: false, error: "Unable to update database:"+err}
+    }
   },
 
   // For if has_passport is false, no_passport route
@@ -1254,20 +1254,21 @@ export const passportListingService = {
     const normalizedCaller = normalizeAddress(callerWalletAddress);
 
     try{
-      await createListingRequest(
+      const listing = await createListingRequest(
         false,
         normalizedCaller,
       );
-    }catch{
-        return { success: false, 
-                 error: "Failed to submit listing request. Please try again later.",
-                };
-    }
 
-    return {
-      success: true,
-      message: "Listing request submitted. LuxPass will verify your item before listing.",
-    };
+      return {
+        success: true,
+        message: "Listing request submitted. LuxPass will verify your item before listing.",
+        tempObjectAddress: listing.passport_object_address,
+      };
+    }catch (err: any){
+        return { success: false, 
+                 error: "Failed to submit listing request. Please try again later." + err,
+        };
+    }
   },
 
   // find and update listing request with no_passport
@@ -1286,17 +1287,17 @@ export const passportListingService = {
     }
 
     try{
-      await updateListingRequestStatus(normalizeAddress(body.tempObjectAddress), body.status);
+      const result = await updateListingRequestStatus(normalizeAddress(body.tempObjectAddress), body.status as ListingRequestStatus);
+      return {
+        success: true,
+        message: `Listing request has been ${body.status.toLowerCase()}.`,
+        newObjectAddress: result.passport_object_address
+      };
     }catch{
         return { success: false, 
                  error: "Failed to update listing request. Please try again later.",
                 };
     }
-
-    return {
-      success: true,
-      message: `Listing request has been ${body.status.toLowerCase()}.`,
-    };
   },
 
   // Final step before listing for no passport verification stage
@@ -1309,7 +1310,12 @@ export const passportListingService = {
 
     try{
       // First get the owner address from the listing then use it as owner_address in a copy of the mint service flow
-      const listing = await getListingRequest(body.tempObjectAddress)
+      const objectAddress = normalizeAddress(body.tempObjectAddress);
+      const listing = await getListingRequest(objectAddress);
+
+      if (!listing) {
+        return { success: false, error: "No listing request found for this temp address." };
+      }
 
       if (listing.status !== "verifying"){
         return { success: false, error: "Listing request is not in verifying stage." };
@@ -1318,7 +1324,7 @@ export const passportListingService = {
         return { success: false, error: "Listing request already has a passport. No need to mint-list." };
       }
 
-      const owner_address = listing.owner_address
+      const owner_address = listing.owner_address;
 
       validateWalletAddress(adminWalletAddress, "admin wallet address");
       validateImageFile(imageFile);
@@ -1374,7 +1380,7 @@ export const passportListingService = {
         metadataIpfsUri: metadataUpload.ipfsUri,
         serialPlainBytes,
         metadataBytes,
-        placeholderAddress: body.tempObjectAddress
+        placeholderAddress: normalizeAddress(body.tempObjectAddress),
       });
 
       return {
@@ -1386,8 +1392,8 @@ export const passportListingService = {
         metadata,
         payload,
       };
-    }catch{
-      return { success: false, error: "Minting for new listed passport failed" };
+    }catch (error){
+      return { success: false, error: "Minting for new listed passport failed:"+error };
     }
   },
 
@@ -1437,10 +1443,10 @@ export const passportListingService = {
       // Search will be done on the tempPassport
       await updateListingRequestPassportAddress(
         body.tempPassportObjectAddress,
-        normalizeAddress(normalizedPassportAddr),
+        normalizedPassportAddr,
       )
-    } catch {
-      // even if it fails cache would be cleared eventually, should log this somewhere though for debugging
+    } catch (err:any){
+      return { success: false, error: "Failed to update database after minting:"+err };
     }
 
     return { success: true, message: "Minting of listed passport recorded successfully." };
@@ -1501,9 +1507,8 @@ export const passportListingService = {
     // Request to admin to delist the passport
     // Only admin can sign the transaction to change status to returnining, not owner.
     try{
-      const passportObjectAddress = normalizedPassportAddr
       await createDelistRequest({
-        passportObjectAddress,
+        passportObjectAddress: normalizedPassportAddr,
         requesterAddress: normalizedCaller,
         addressLine1: body.addressLine1,
         addressLine2: body.addressLine2,
@@ -1513,14 +1518,14 @@ export const passportListingService = {
         country: body.country,
       });
       
-      const status = "request_return"
+      const status = "request_return";
 
       await updateListingRequestStatus(
-        passportObjectAddress,
-        status
-      )
+        normalizedPassportAddr,
+        status as ListingRequestStatus
+      );
     }catch (error) {
-      return {success:false, message:"Delist request failed to submit."}
+      return {success:false, error:"Delist request failed to submit:"+error};
     }
 
     return { success: true, message: "Delist request submitted. Admin will review and delist your passport." };
@@ -1602,16 +1607,18 @@ export const passportListingService = {
     }
 
     const fnName = tx.payload?.function?.toLowerCase() ?? "";
-    if (fnName !== PASSPORT_SET_STATUS_FN.toLowerCase()) {
-      return { success: false, error: "Transaction is not a set_status transaction." };
+    if (fnName !== PASSPORT_DELIST_FN.toLowerCase()) {
+      return { success: false, error: "Transaction is not a delist transaction." };
     }
 
     // update database to close the delist request and set listing status to returned
     try {
-      await updateDelistRequestStatus(normalizeAddress(body.passportObjectAddress), "closed")
-      await updateListingRequestStatus(normalizeAddress(body.passportObjectAddress), "returned")
-    } catch {
-      // best-effort
+      const normalizedAddress = normalizeAddress(body.passportObjectAddress)
+      await updateDelistRequestStatus(normalizeAddress(normalizedAddress), "closed" as DelistRequestStatus)
+      await updateListingRequestStatus(normalizeAddress(normalizedAddress), "returned" as ListingRequestStatus)
+    }
+    catch (err:any){
+        return { success: false, error: "Failed to update database after confirming receipt:" + err };
     }
 
     return { success: true, message: "Receipt confirmed. Passport is now active." };
@@ -1659,9 +1666,9 @@ export const passportListingService = {
   }): Promise<listingRequestReturn> {
 
     try{
-      const result = await getListingRequest({
-        passportObjectAddress: params.passportObjectAddress
-      });
+      const result = await getListingRequest(
+        normalizeAddress(params.passportObjectAddress)
+      );
 
       if (!result) {
         return { 
@@ -1670,19 +1677,19 @@ export const passportListingService = {
         };
       }
       return { success: true, payload: result };
-    }catch{
-      return {success:false, error: "Failed to fetch listing by passport Address"}
+    }catch (err:any){
+      return {success:false, error: "Failed to fetch listing by passport Address:"+err}
     }
   },
 
   async getListingsByStatus(params:{status: ListingRequestStatus}): Promise<listingRequestReturnList> {
     try {
-      const list = await getListingRequestsByStatus({
-        status: params.status
-      });
+      const list = await getListingRequestsByStatus(
+        params.status as ListingRequestStatus
+      );
       return { success: true, payload: list };
-    } catch (err) {
-      return { success: false, error: "Failed to fetch listings by status" };
+    } catch (err:any) {
+      return {success:false, error: "Failed to fetch listing by passport Address:"+err}
     }
   },
 
@@ -1691,9 +1698,9 @@ export const passportListingService = {
   }): Promise<deListRequestReturn> {
 
     try{
-      const result = await getDelistRequest({
-        passportObjectAddress: params.passportObjectAddress
-      });
+      const result = await getDelistRequest(
+        params.passportObjectAddress
+      );
 
       if (!result) {
         return { 
@@ -1702,19 +1709,19 @@ export const passportListingService = {
         };
       }
       return { success: true, payload: result };
-    }catch{
-      return {success:false, error: "Failed to fetch de listing by passport Address"}
+    }catch (err:any) {
+      return {success:false, error: "Failed to fetch listing by passport Address:"+err}
     }
   },
 
-  async getDeListingsByStatus(params:{status: DelistRequestStatus}) {
+  async getDeListingsByStatus(params:{status: DelistRequestStatus}): Promise<deListRequestReturnList> {
     try {
-      const list = await getDelistRequestsByStatus({
-        status: params.status
-      });
+      const list = await getDelistRequestsByStatus(
+        params.status as DelistRequestStatus
+      );
       return { success: true, payload: list };
-    } catch (err) {
-      return { success: false, error: "Failed to fetch de-listings by status" };
+    } catch (err:any) {
+      return {success:false, error: "Failed to fetch listing by passport Address:"+err}
     }
   },
 };

@@ -115,6 +115,7 @@ export async function prepareTransferPassportHandler(req: Request, res: Response
     });
 
     if (!result.success) {
+      console.log("Transfer passport failed:"+result.error);
       return res.status(400).json(result);
     }
 
@@ -172,8 +173,15 @@ export async function getPassportHandler(req: Request, res: Response, next: Next
   try {
     const passportObjectAddr = req.params.passportObjectAddr;
     const data = await passportService.getPassport(passportObjectAddr);
+    if (data == null){
+      return res.status(404).json({ ok: false, error: "Passport not found." });
+    }
     return res.status(200).json({ ok: true, data });
   } catch (err) {
+    console.error("get passport by passport object address failed:", err);
+    if (err instanceof Error) {
+      return res.status(500).json({ ok: false, error: "Failed to get passport" });
+    }
     return next(err);
   }
 }
@@ -311,6 +319,7 @@ export async function prepareSetStatusHandler(req: Request, res: Response) {
     });
 
     if (!result.success) {
+      console.log(result.error)
       return res.status(400).json(result);
     }
 
@@ -348,6 +357,7 @@ export async function recordSetStatusHandler(req: Request, res: Response) {
     const result = await passportListingService.recordSetStatus({ body });
 
     if (!result.success) {
+      console.log(result.error)
       return res.status(400).json(result);
     }
 
@@ -383,6 +393,7 @@ export async function prepareUpdateMetadataHandler(req: Request, res: Response) 
     });
 
     if (!result.success) {
+      console.log(result.error)
       return res.status(400).json(result);
     }
 
@@ -420,6 +431,7 @@ export async function recordUpdateMetadataHandler(req: Request, res: Response) {
     const result = await passportListingService.recordUpdateMetadata({ body });
 
     if (!result.success) {
+      console.log(result.error)
       return res.status(400).json(result);
     }
 
@@ -462,6 +474,7 @@ export async function prepareListPassportHandler(req: Request, res: Response) {
     });
 
     if (!result.success) {
+      console.log(result.error)
       return res.status(400).json(result);
     }
 
@@ -499,9 +512,10 @@ export async function recordListPassportHandler(req: Request, res: Response) {
     const result = await passportListingService.recordListPassport({ body });
 
     if (!result.success) {
+      console.log("record list passport failed:"+result.error);
       return res.status(400).json(result);
     }
-
+    console.log("Saved listing for passport object address:"+result.passportObjectAddress);
     return res.status(200).json(result);
   } catch (error) {
     console.error("[passport] record list passport failed:", error);
@@ -542,6 +556,7 @@ export async function receivePassportHandler(req: Request, res: Response) {
     });
 
     if (!result.success) {
+      console.log(result.error)
       return res.status(400).json(result);
     }
 
@@ -585,6 +600,7 @@ export async function verifyPassportHandler(req: Request, res: Response) {
     });
 
     if (!result.success) {
+      console.log(result.error)
       return res.status(400).json(result);
     }
 
@@ -615,6 +631,7 @@ export async function requestListingNoPassport(req: Request, res: Response) {
     });
 
     if (!result.success) {
+      console.log("failed to record listing request (no-passport) :"+result.error);
       return res.status(400).json(result);
     }
 
@@ -662,6 +679,7 @@ export async function receiveNoPassportHandler(req: Request, res: Response) {
     });
 
     if (!result.success) {
+      console.log(result.error)
       return res.status(400).json(result);
     }
 
@@ -688,13 +706,22 @@ export async function prepareMintListPassportHandler(req: Request, res: Response
       });
     }
 
+    const body = req.body as PrepareMintListPassportRequestBody;
+    if (!body.tempObjectAddress){
+      return res.status(400).json({
+        success: false,
+        error: "Must include tempObjectAddress for verify (no-passport) route.",
+      });
+    }
+
     const result = await passportListingService.prepareMintListPassport({
       adminWalletAddress: req.user.walletAddress,
-      body: req.body as PrepareMintListPassportRequestBody,
+      body: body,
       imageFile: req.file,
     });
 
     if (!result.success) {
+      console.log(result.error)
       return res.status(400).json(result);
     }
 
@@ -742,6 +769,7 @@ export async function recordMintListPassportHandler(req: Request, res: Response)
     const result = await passportListingService.recordMintListPassport({ body });
 
     if (!result.success) {
+      console.log(result.error)
       return res.status(400).json(result);
     }
 
@@ -784,6 +812,7 @@ export async function requestDelistHandler(req: Request, res: Response) {
     });
 
     if (!result.success) {
+      console.log(result.error)
       return res.status(400).json(result);
     }
 
@@ -826,6 +855,7 @@ export async function approveDelistHandler(req: Request, res: Response) {
     });
 
     if (!result.success) {
+      console.log(result.error)
       return res.status(400).json(result);
     }
 
@@ -867,6 +897,7 @@ export async function prepareConfirmReceiptHandler(req: Request, res: Response) 
     });
 
     if (!result.success) {
+      console.log(result.error)
       return res.status(400).json(result);
     }
 
@@ -905,6 +936,7 @@ export async function recordConfirmReceiptHandler(req: Request, res: Response) {
     const result = await passportListingService.recordConfirmReceipt({ body });
 
     if (!result.success) {
+      console.log(result.error)
       return res.status(400).json(result);
     }
 
@@ -944,6 +976,7 @@ export async function getListingByPassportAddressHandler(req: Request, res: Resp
       });
   
       if (!result.success) {
+        console.log(result.error)
         return res.status(400).json(result);
       }
   
@@ -983,6 +1016,7 @@ export async function getListingByStatusHandler(req: Request, res: Response) {
       });
   
       if (!result.success) {
+        console.log(result.error)
         return res.status(400).json(result);
       }
   
@@ -1022,6 +1056,7 @@ export async function getDelistingByPassportAddressHandler(req: Request, res: Re
       });
   
       if (!result.success) {
+        console.log(result.error)
         return res.status(400).json(result);
       }
   
@@ -1061,6 +1096,7 @@ export async function getDelistingsByStatusHandler(req: Request, res: Response) 
       });
   
       if (!result.success) {
+        console.log(result.error)
         return res.status(400).json(result);
       }
   

@@ -259,6 +259,7 @@ export type RecordListPassportResponse =
   | {
       success: true;
       message: string;
+      passportObjectAddress: string;
     }
   | {
       success: false;
@@ -269,6 +270,7 @@ export type submitListingRequestResponse =
   | {
       success: true;
       message: string;
+      tempObjectAddress: string;
     }
   | {
       success: false;
@@ -284,6 +286,7 @@ export type UpdateNoPassportListingRequestBody = {
 export type UpdateNoPassportListingResponse =   | {
   success: true;
   message: string;
+  newObjectAddress?: string;
 }
 | {
   success: false;
