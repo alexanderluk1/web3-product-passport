@@ -1,4 +1,4 @@
-import crypto from "crypto";
+import crypto from "node:crypto";
 import { GenerateChallengeResponse, LoginChallenge } from "../types/auth.types";
 import { deleteExpiredChallenges, saveChallenge } from "../stores/challengeStore";
 

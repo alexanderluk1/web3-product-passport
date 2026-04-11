@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "tsx watch --env-file=.env src/server.ts",
     "start": "tsx --env-file=.env src/server.ts",
+    "start:safe": "tsx --env-file=.env src/Start.ts",
+    "sign": "tsx --env-file=.env scripts/sign-challenge.ts",
+    "sign:setup": "node -e \"const fs=require('fs');const p='scripts/sign-challenge.ts';if(!fs.existsSync(p))fs.copyFileSync('scripts/sign-challenge.example.ts',p);else console.log('sign-challenge.ts already exists; not overwriting.');\"",
     "build": "tsc",
     "start:dist": "node dist/server.js",
     "test": "vitest run",
@@ -18,8 +21,6 @@
   "dependencies": {
     "@aptos-labs/ts-sdk": "^6.1.0",
     "aptos": "^1.22.1",
-    "better-sqlite3": "^12.8.0",
-    "crypto": "^1.0.1",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",

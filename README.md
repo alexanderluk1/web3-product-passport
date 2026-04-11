@@ -1,0 +1,183 @@
+# LuxPass Web3 Product Passport
+
+LuxPass is a full-stack Aptos project for creating, transferring, and verifying on-chain digital product passports.
+
+This repository contains:
+- Smart contracts (Move) for product passport and token logic
+- A backend API for auth, issuer/admin flows, and on-chain interactions
+- A React frontend for user, issuer, admin, and verification experiences
+
+## Repository Structure
+
+- `frontend/LuxPass` - React + Vite + TypeScript frontend
+- `backend` - Express + TypeScript API server
+- `web3/product-passport` - Move package for product passport + issuer registry
+- `web3/luxpass-token` - Move package for LuxPass token mechanics
+
+## Tech Stack
+
+- Frontend: React, Vite, TypeScript, Tailwind, Aptos wallet adapter
+- Backend: Node.js, Express, TypeScript (`tsx` runtime)
+- Chain: Aptos Move (`product-passport`, `luxpass-token`)
+
+## Prerequisites
+
+- Node.js 20+ (recommended)
+- npm and/or pnpm
+- Aptos CLI (for Move package operations)
+- Aptos wallet browser extension (for frontend login/signing)
+
+## Quick Start (Local)
+
+### 1) Install dependencies
+
+```bash
+cd backend && npm install
+cd ../frontend/LuxPass && pnpm install
+```
+
+If you prefer npm for frontend:
+
+```bash
+cd frontend/LuxPass && npm install
+```
+
+### 2) Configure backend environment
+
+Create `backend/.env` (already present in your local setup) with these keys:
+
+```env
+PORT=3001
+CORS_ORIGINS=http://localhost:5173
+
+APTOS_NETWORK=devnet
+APTOS_FULLNODE_URL=https://fullnode.devnet.aptoslabs.com/v1
+
+MODULE_ADDRESS=0x...
+REGISTRY_ADDRESS=0x...
+
+LPT_MODULE_ADDRESS=0x...
+LPT_STATE_ADDRESS=0x...
+LPT_SIGNUP_REWARD_DEFAULT=10
+LPT_REFERRAL_REWARD_DEFAULT=7
+
+ADMIN_PRIVATE_KEY=0x...
+ADMIN_WALLETS=0xadmin1,0xadmin2
+
+JWT_SECRET=replace-with-strong-secret
+
+PINATA_JWT=...
+PINATA_GATEWAY_URL=...
+
+PASSPORT_MODULE_NAME=passport
+PASSPORT_MINT_FUNCTION=mint
+```
+
+Notes:
+- `ADMIN_WALLETS` controls which wallets are treated as `ADMIN` in auth.
+- Frontend currently calls backend at `http://localhost:3001` directly.
+
+### 3) Run backend
+
+```bash
+cd backend
+npm run dev
+```
+
+Alternative startup modes:
+
+```bash
+npm run start      # standard start with .env
+npm run start:safe # preflight checks/init for registry + token state
+```
+
+Backend default URL: `http://localhost:3001`
+
+Health check:
+
+```bash
+curl http://localhost:3001/health
+```
+
+### 4) Run frontend
+
+```bash
+cd frontend/LuxPass
+pnpm dev
+```
+
+Frontend default URL: `http://localhost:5173`
+
+## Core API Routes
+
+Base URL: `http://localhost:3001`
+
+- Auth:
+  - `POST /auth/challenge`
+  - `POST /auth/login`
+  - `GET /auth/me`
+- Passport:
+  - `POST /api/passports/mint/prepare`
+  - `POST /api/passports/transfer/prepare`
+  - `POST /api/passports/transfer/record`
+  - `GET /api/passports/products`
+  - `GET /api/passports/owned`
+  - `GET /api/passports/by-product/:productId`
+  - `GET /api/passports/by-product/:productId/provenance`
+- Token:
+  - `GET /api/tokens/status`
+  - `POST /api/tokens/*/prepare` (init, mint, transfer, burn, claim, etc.)
+- Admin/Issuer:
+  - `GET /admin/registry/status`
+  - `POST /admin/registry/init`
+  - `GET /admin/registry/issuers`
+  - `GET /admin/issuers`
+  - `POST /admin/issuers/register`
+
+## Move Packages
+
+### Product passport package
+
+```bash
+cd web3/product-passport
+aptos move test
+aptos move publish
+```
+
+### LuxPass token package
+
+```bash
+cd web3/luxpass-token
+aptos move test
+aptos move publish
+```
+
+After publishing, update `backend/.env` addresses to match deployed modules/state.
+
+## Common Issues
+
+- `CORS origin not allowed`:
+  - Ensure frontend URL is included in `CORS_ORIGINS`.
+- `Invalid signature` on login:
+  - Ensure the wallet used to sign matches the wallet used in `/auth/challenge`.
+  - Use `backend/scripts/sign-challenge.example.ts` for local signature debugging.
+- `module_not_found` / init failures:
+  - Verify Move modules are published to the same network as `APTOS_NETWORK`.
+  - Verify `MODULE_ADDRESS`, `REGISTRY_ADDRESS`, `LPT_MODULE_ADDRESS`, and `LPT_STATE_ADDRESS`.
+
+## Scripts Reference
+
+### Backend (`backend/package.json`)
+
+- `npm run dev`
+- `npm run start`
+- `npm run start:safe`
+- `npm run sign`
+- `npm run sign:setup`
+
+### Frontend (`frontend/LuxPass/package.json`)
+
+- `pnpm dev`
+- `pnpm build`
+- `pnpm preview`
+- `pnpm lint`
