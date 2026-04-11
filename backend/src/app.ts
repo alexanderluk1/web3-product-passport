@@ -101,10 +101,10 @@ export function createApp() {
           "POST /api/passports/receipt/record",// (The transaction is confirmed, listing status -> returned, de-listing status -> closed)
           
           // Data Retrieval from database of the listings
-          "POST /api/passports/listings/getByPassportAddress",
-          "POST /api/passports/listings/getByStatus",
-          "POST /api/passports/de-listings/getByPassportAddress",
-          "POST /api/passports/de-listings/getByStatus"
+          "POST /api/passports/listings/address/:passportObjectAddress",
+          "POST /api/passports/listings/status/:status",
+          "POST /api/passports/de-listings/address/:passportObjectAddress",
+          "POST /api/passports/de-listings/status/:status"
       ],
     });
   });
