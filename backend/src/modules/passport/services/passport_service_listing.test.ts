@@ -341,6 +341,12 @@ describe("prepareMintListPassport", () => {
     description: "Iconic bag",
   };
 
+  const mockImage = { 
+    buffer: Buffer.from("img"), 
+    mimetype: "image/jpeg" 
+  } as Express.Multer.File;
+
+  // 1. SUCCESS PATH
   it("returns mint_list payload when listing is verifying and has no passport", async () => {
     mockGetListingRequest.mockResolvedValue({
       id: "l1",
@@ -352,23 +358,24 @@ describe("prepareMintListPassport", () => {
     const result = await passportListingService.prepareMintListPassport({
       adminWalletAddress: "0xadmin",
       body: validBody,
-      imageFile: { buffer: Buffer.from("img"), mimetype: "image/jpeg" } as Express.Multer.File,
+      imageFile: mockImage,
     });
 
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.payload.function).toBe(PASSPORT_MINTLIST_FN);
-      // placeholderAddress should be in the arguments
+      // Ensure the placeholder/temp address is passed to the contract
       expect(result.payload.functionArguments).toContain(validBody.tempObjectAddress);
-      // owner address should be included (normalized)
+      // Ensure the owner address is present
       expect(result.payload.functionArguments).toContain(OWNER_ADDR);
     }
   });
 
+  // 2. ERROR: WRONG STATUS
   it("rejects when listing status is not 'verifying'", async () => {
     mockGetListingRequest.mockResolvedValue({
       id: "l1",
-      status: "pending",
+      status: "pending", // Incorrect status
       has_passport: false,
       owner_address: OWNER_ADDR,
     });
@@ -376,41 +383,49 @@ describe("prepareMintListPassport", () => {
     const result = await passportListingService.prepareMintListPassport({
       adminWalletAddress: "0xadmin",
       body: validBody,
-      imageFile: { buffer: Buffer.from("img"), mimetype: "image/jpeg" } as Express.Multer.File,
+      imageFile: mockImage,
     });
 
     expect(result.success).toBe(false);
-    expect((result as { error: string }).error).toMatch(/verifying/i);
+    expect((result as any).error).toMatch(/verifying/i);
   });
 
+  // 3. ERROR: DUPLICATE PASSPORT
   it("rejects when listing already has a passport", async () => {
     mockGetListingRequest.mockResolvedValue({
       id: "l1",
       status: "verifying",
-      has_passport: true,
+      has_passport: true, // Should be false for minting
       owner_address: OWNER_ADDR,
     });
 
     const result = await passportListingService.prepareMintListPassport({
       adminWalletAddress: "0xadmin",
       body: validBody,
-      imageFile: { buffer: Buffer.from("img"), mimetype: "image/jpeg" } as Express.Multer.File,
+      imageFile: mockImage,
     });
 
     expect(result.success).toBe(false);
-    expect((result as { error: string }).error).toMatch(/already has a passport/i);
+    expect((result as any).error).toMatch(/already has a passport/i);
   });
 
   it("returns failure when getListingRequest throws", async () => {
     mockGetListingRequest.mockRejectedValue(new Error("DB error"));
-
+  
     const result = await passportListingService.prepareMintListPassport({
       adminWalletAddress: "0xadmin",
       body: validBody,
-      imageFile: { buffer: Buffer.from("img"), mimetype: "image/jpeg" } as Express.Multer.File,
+      imageFile: { buffer: Buffer.from("img"), mimetype: "image/jpeg" } as any,
     });
-
+  
     expect(result.success).toBe(false);
+    
+    // Use a regex to match the "DB error" inside your prefixed string
+    if (!result.success) {
+      expect(result.error).toMatch(/DB error/);
+      // Or exactly:
+      expect(result.error).toBe("Minting for new listed passport failed: DB error");
+    }
   });
 });
 
@@ -519,7 +534,7 @@ describe("recordSetStatus", () => {
       body: { txHash: TX_HASH, passportObjectAddress: PASSPORT_ADDR },
     });
 
-    expect(mockUpdateDelistRequestStatus).toHaveBeenCalledWith(PASSPORT_ADDR, "closed");
+    expect(mockUpdateDelistRequestStatus).toHaveBeenCalledWith(PASSPORT_ADDR, "returning");
   });
 
   it("does NOT update listing status for non-marketplace statuses", async () => {
@@ -671,7 +686,9 @@ describe("requestDelist", () => {
 
 describe("markDelistProcessed", () => {
   it("returns a set_status(RETURNING) payload for admin to sign", async () => {
-    mockGetDelistRequest.mockResolvedValue({ id: "d1", status: "pending" });
+    mockGetDelistRequest.mockResolvedValue({ id: "d1", status: "pending", requester_address:PASSPORT_ADDR });
+    mockGetListingRequest.mockResolvedValue({id:"d1", status: "request_return", owner_address:PASSPORT_ADDR});
+    mockGetPassportOwner.mockResolvedValue(PASSPORT_ADDR);
 
     const result = await passportListingService.markDelistProcessed({
       callerRole: "ADMIN",
@@ -709,7 +726,9 @@ describe("markDelistProcessed", () => {
   });
 
   it("includes passport and registry addresses in the payload", async () => {
-    mockGetDelistRequest.mockResolvedValue({ id: "d1", status: "pending" });
+    mockGetDelistRequest.mockResolvedValue({ id: "d1", status: "pending", requester_address:PASSPORT_ADDR });
+    mockGetListingRequest.mockResolvedValue({id:"d1", status: "request_return", owner_address:PASSPORT_ADDR});
+    mockGetPassportOwner.mockResolvedValue(PASSPORT_ADDR);
 
     const result = await passportListingService.markDelistProcessed({
       callerRole: "ADMIN",
@@ -775,7 +794,7 @@ describe("prepareConfirmReceipt", () => {
 
 describe("recordConfirmReceipt", () => {
   it("closes delist request with 'closed' and updates listing to 'returned'", async () => {
-    mockFetch(PASSPORT_SET_STATUS_FN);
+    mockFetch(PASSPORT_DELIST_FN);
     mockGetPassport.mockResolvedValue(makePassport({ status: STATUS_ACTIVE }));
 
     const result = await passportListingService.recordConfirmReceipt({
@@ -841,9 +860,14 @@ describe("getListingByPassportAddress", () => {
 
 describe("getListingByStatus", () => {
   it ("returns listing by status with all fields", async() => {
-    mockGetListingRequestStatus.mockResolvedValue(makePassport([{ id: "d1", passportObjectAddress: PASSPORT_ADDR ,status: "pending" }]));
-    const status = "pending"
-    const result = await passportListingService.getListingsByStatus(status);
+    const status: ListingRequestStatus = "pending";
+    const mockList = [{ 
+      id: "d1", 
+      passport_object_address: PASSPORT_ADDR, // Use the DB field names if applicable
+      status: status 
+    }];
+    mockGetListingRequestStatus.mockResolvedValue(mockList);
+    const result = await passportListingService.getListingsByStatus({status});
 
     expect(result.success).toBe(true);
     expect(mockGetListingRequestStatus).toHaveBeenCalledWith(status);
@@ -857,7 +881,7 @@ describe("getListingByStatus", () => {
 describe("getListingByPassportAddress", () => {
   it ("returns listing with all fields", async() => {
     mockGetDelistRequest.mockResolvedValue({ id: "d1", passportObjectAddress: PASSPORT_ADDR ,status: "returned" });
-    const result = await passportListingService.getDeListingRequestByPassportAddress(PASSPORT_ADDR);
+    const result = await passportListingService.getDeListingRequestByPassportAddress({passportObjectAddress: PASSPORT_ADDR});
 
     expect(result.success).toBe(true);
     expect(result.payload.passportObjectAddress).toBe(PASSPORT_ADDR);

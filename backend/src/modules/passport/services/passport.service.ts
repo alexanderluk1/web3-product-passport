@@ -100,7 +100,6 @@ import {
   getDelistRequestsByStatus,
   getListingRequestsByStatus,
 } from "../repository/listing_repository";
-import { Result } from "pg";
 
 const aptos = makeAptosClient();
 const FULLNODE_URL =
@@ -1410,7 +1409,11 @@ export const passportListingService = {
         payload,
       };
     }catch (error){
-      return { success: false, error: "Minting for new listed passport failed:"+error };
+      const message = error instanceof Error ? error.message : String(error);
+      return { 
+        success: false, 
+        error: `Minting for new listed passport failed: ${message}` 
+      };
     }
   },
 
@@ -1667,37 +1670,40 @@ export const passportListingService = {
       };
     }
 
-    const listing = await getListingRequest(normalizedPassportAddr);
-    if (!listing) {
-      return {
-        success: false,
-        error: "No listing request found for this passport.",
-      };
-    }
-
-    if (listing.status != "request_return") {
-      return {
-        success: false,
-        error: "Listing is not requesting a return:"+listing.status,
-      };
-    }
-
-    const listed_owner = await getPassportOwner(normalizedPassportAddr);
-    if (listed_owner != listing.owner_address || listed_owner != existing.requester_address){
-      return {
-        success: false,
-        error: "Owner mismatch:"+listed_owner+", "+listing.owner_address+", "+existing.requester_address,
-      };
-    }
-
-    const payload = buildSetStatusPayload(
-      {
-        passportObjectAddress: normalizedPassportAddr,
-        registryAddress: normalizeAddress(REGISTRY_ADDRESS),
-        newStatus: STATUS_RETURNING,
+    try {
+      const listing = await getListingRequest(normalizedPassportAddr);
+      if (!listing) {
+        return {
+          success: false,
+          error: "No listing request found for this passport.",
+        };
       }
-    )
-    return { success: true, payload: payload };
+
+      if (listing.status != "request_return") {
+        return {
+          success: false,
+          error: "Listing is not requesting a return:"+listing.status,
+        };
+      }
+
+      const listed_owner = await getPassportOwner(normalizedPassportAddr);
+      if (listed_owner != listing.owner_address || listed_owner != existing.requester_address){
+        return {
+          success: false,
+          error: "Owner mismatch:"+listed_owner+", "+listing.owner_address+", "+existing.requester_address,
+        };
+      }
+      const payload = buildSetStatusPayload(
+        {
+          passportObjectAddress: normalizedPassportAddr,
+          registryAddress: normalizeAddress(REGISTRY_ADDRESS),
+          newStatus: STATUS_RETURNING,
+        }
+      )
+      return { success: true, payload: payload };
+    } catch (error){
+      return {success:false, error:"Delist request failed to submit:"+error};
+    }
   },
 
   // Get single listing by passportObjectAddress
