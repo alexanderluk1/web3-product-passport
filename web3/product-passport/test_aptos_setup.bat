@@ -3,12 +3,17 @@ setlocal
 
 :: --- Configuration ---
 set URL=http://localhost:8080/v1
+:: --- PRIV_KEY is the local profile private key
 set PRIV_KEY=0xd9da2e60da50dbcfc78307fca7401f2de65b9dceac6632e394c8317a09429e52
+:: --- CONTRACT_ADDR is profile local address
 set CONTRACT_ADDR=0xa23b0e79cd15889d49c0406bf741a80350c1f1bc7097ea96daafe7dc66382f65
 
+:: --- accounts created on custom network with the URL as the rest api ----
+:: --- aptos init --profile name --network custom --rest_endpoint URL --faucet_endpoint faucet_URL
 echo [1/5] Funding profiles...
 call aptos account fund-with-faucet --profile local
 call aptos account fund-with-faucet --profile test1
+call aptos account fund-with-faucet --profile test2
 
 echo [2/5] Publishing Move modules...
 call aptos move publish --named-addresses luxpass=local --url %URL% --private-key %PRIV_KEY% --assume-yes

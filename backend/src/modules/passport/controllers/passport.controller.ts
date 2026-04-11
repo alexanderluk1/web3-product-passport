@@ -955,16 +955,9 @@ export async function recordConfirmReceiptHandler(req: Request, res: Response) {
 
 export async function getListingByPassportAddressHandler(req: Request, res: Response) {
     try {
-      if (!req.user) {
-        return res.status(401).json({
-          success: false,
-          error: "Unauthorized",
-        });
-      }
+      const { passportObjectAddress } = req.params;
   
-      const body = req.body as getListingByPassportAddressBody;
-  
-      if (!body.passportObjectAddress) {
+      if (!passportObjectAddress) {
         return res.status(400).json({
           success: false,
           error: "passportObjectAddress is required.",
@@ -972,7 +965,7 @@ export async function getListingByPassportAddressHandler(req: Request, res: Resp
       }
   
       const result = await passportListingService.getListingByPassportAddress({
-        passportObjectAddress: body.passportObjectAddress,
+        passportObjectAddress: passportObjectAddress,
       });
   
       if (!result.success) {
@@ -995,16 +988,10 @@ export async function getListingByPassportAddressHandler(req: Request, res: Resp
 
 export async function getListingByStatusHandler(req: Request, res: Response) {
     try {
-      if (!req.user) {
-        return res.status(401).json({
-          success: false,
-          error: "Unauthorized",
-        });
-      }
+
+      const { status } = req.params;
   
-      const body = req.body as getListingsByStatus;
-  
-      if (!body.status) {
+      if (!status) {
         return res.status(400).json({
           success: false,
           error: "status is required.",
@@ -1012,7 +999,7 @@ export async function getListingByStatusHandler(req: Request, res: Response) {
       }
   
       const result = await passportListingService.getListingsByStatus({
-        status: body.status,
+        status: status,
       });
   
       if (!result.success) {
@@ -1035,16 +1022,9 @@ export async function getListingByStatusHandler(req: Request, res: Response) {
 
 export async function getDelistingByPassportAddressHandler(req: Request, res: Response) {
     try {
-      if (!req.user) {
-        return res.status(401).json({
-          success: false,
-          error: "Unauthorized",
-        });
-      }
+      const { passportObjectAddress } = req.params;
   
-      const body = req.body as getListingByPassportAddressBody;
-  
-      if (!body.passportObjectAddress) {
+      if (!passportObjectAddress) {
         return res.status(400).json({
           success: false,
           error: "passportObjectAddress is required.",
@@ -1052,7 +1032,7 @@ export async function getDelistingByPassportAddressHandler(req: Request, res: Re
       }
   
       const result = await passportListingService.getDeListingRequestByPassportAddress({
-        passportObjectAddress: body.passportObjectAddress,
+        passportObjectAddress: passportObjectAddress,
       });
   
       if (!result.success) {
@@ -1075,16 +1055,9 @@ export async function getDelistingByPassportAddressHandler(req: Request, res: Re
 
 export async function getDelistingsByStatusHandler(req: Request, res: Response) {
     try {
-      if (!req.user) {
-        return res.status(401).json({
-          success: false,
-          error: "Unauthorized",
-        });
-      }
+      const { status } = req.params;
   
-      const body = req.body as getDelistingsByStatus;
-  
-      if (!body.status) {
+      if (!status) {
         return res.status(400).json({
           success: false,
           error: "status is required.",
@@ -1092,7 +1065,7 @@ export async function getDelistingsByStatusHandler(req: Request, res: Response) 
       }
   
       const result = await passportListingService.getDeListingsByStatus({
-        status: body.status,
+        status: status,
       });
   
       if (!result.success) {

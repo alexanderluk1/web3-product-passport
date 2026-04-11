@@ -1230,13 +1230,31 @@ export const passportListingService = {
     const normalizedPassportAddr = normalizeAddress(body.passportObjectAddress);
     try {
       const passportOwner = await getPassportOwner(normalizedPassportAddr);
-      const result = await createListingRequest(
-        true,
-        normalizeAddress(passportOwner),
-        normalizedPassportAddr,
-      )
-
-      return { success: true, message: "Listing Passport recorded successfully.", passportObjectAddress: result.passport_object_address };
+      const existing_listing = await getListingRequest(normalizedPassportAddr);
+      if (!existing_listing){
+        const result = await createListingRequest(
+          true,
+          normalizeAddress(passportOwner),
+          normalizedPassportAddr,
+        )
+        return { success: true, message: "Listing Passport updated successfully.", passportObjectAddress: result.passport_object_address };
+      }
+      else{
+        if (existing_listing.status === "returned"){
+          const status = "pending" as ListingRequestStatus
+          updateListingRequestStatus(
+            normalizedPassportAddr,
+            status
+          )
+          // In case the owner has changed since it was last listed
+          const updateOwner = await updateListingRequestOwner(
+            normalizedPassportAddr,
+            passportOwner
+          )
+          return { success: true, message: "Listing Passport updated successfully.", passportObjectAddress: updateOwner.passport_object_address };
+        }
+          return {success:false, error:"Listing already exists and is still active"};
+      }
     } catch (err:any){
       // even if it fails cache would be cleared eventually, should log this somewhere though for debugging
       return {success: false, error: "Unable to update database:"+err}
@@ -1290,8 +1308,7 @@ export const passportListingService = {
       const result = await updateListingRequestStatus(normalizeAddress(body.tempObjectAddress), body.status as ListingRequestStatus);
       return {
         success: true,
-        message: `Listing request has been ${body.status.toLowerCase()}.`,
-        newObjectAddress: result.passport_object_address
+        message: `Listing request has been ${body.status.toLowerCase()}.`
       };
     }catch{
         return { success: false, 
@@ -1643,10 +1660,33 @@ export const passportListingService = {
       };
     }
 
-    if (existing.status === "processed") {
+    if (!(existing.status === "pending")) {
       return {
         success: false,
         error: "Delist request has already been processed.",
+      };
+    }
+
+    const listing = await getListingRequest(normalizedPassportAddr);
+    if (!listing) {
+      return {
+        success: false,
+        error: "No listing request found for this passport.",
+      };
+    }
+
+    if (listing.status != "request_return") {
+      return {
+        success: false,
+        error: "Listing is not requesting a return:"+listing.status,
+      };
+    }
+
+    const listed_owner = await getPassportOwner(normalizedPassportAddr);
+    if (listed_owner != listing.owner_address || listed_owner != existing.requester_address){
+      return {
+        success: false,
+        error: "Owner mismatch:"+listed_owner+", "+listing.owner_address+", "+existing.requester_address,
       };
     }
 

@@ -135,7 +135,6 @@ passportRouter.post("/verify/no-passport",
 
 passportRouter.post("/verify/no-passport-record",
     requireAuth,
-    requireRole("ADMIN"),
     recordMintListPassportHandler
 )
 
@@ -166,22 +165,9 @@ passportRouter.post("/receipt/record",
     recordConfirmReceiptHandler
 );
 
-passportRouter.post("/listings/getByPassportAddress",
-    requireAuth,
-    getListingByPassportAddressHandler
-)
+passportRouter.get("/listings/address/:passportObjectAddress", getListingByPassportAddressHandler);
+passportRouter.get("/listings/status/:status", getListingByStatusHandler);
 
-passportRouter.post("/listings/getByStatus",
-    requireAuth,
-    getListingByStatusHandler
-)
-
-passportRouter.post("/de-listings/getByPassportAddress",
-    requireAuth,
-    getDelistingByPassportAddressHandler
-)
-
-passportRouter.post("/de-listings/getByStatus",
-    requireAuth,
-    getDelistingsByStatusHandler
-)
+// De-listings
+passportRouter.get("/de-listings/address/:passportObjectAddress", getDelistingByPassportAddressHandler);
+passportRouter.get("/de-listings/status/:status", getDelistingsByStatusHandler);

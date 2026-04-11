@@ -2,8 +2,8 @@
  * LuxPass Marketplace — Integration Tests
  *
  * Covers both full workflows:
- *   A) Listing WITH passport   (prepare → record → receive → verify → transfer → delist → receipt)
- *   B) Listing WITHOUT passport (no-passport-record → receive → verify/mint → delist → receipt)
+ *   A) Listing WITH passport   (prepare → record → receive → verify → delist → receipt)
+ *   B) Listing WITHOUT passport (no-passport-record → receive → verify/mint → transfer)
  *
  * Prerequisites (already satisfied by docker-compose):
  *   - PostgreSQL running and migrations applied
@@ -14,10 +14,10 @@
  * Run:
  *   docker compose up -d db
  *   NODE_OPTIONS='--import tsx' npx knex migrate:latest --knexfile knexfile.ts
- *   npx jest --testPathPattern=passport.integration --runInBand
+ *   npx vitest run src/modules/passport/tests/passport.integration.test.ts
  *
  * Or against the running container:
- *   docker compose exec backend npx jest --testPathPattern=passport.integration --runInBand
+ *   docker compose exec backend npx vitest run src/modules/passport/tests/passport.integration.test.ts
  */
 
 import request from "supertest";
@@ -80,7 +80,8 @@ async function signAndSubmit(
 // ─── Test Config ────────────────────────────────────────────────────────────
 
 const ADMIN_PRIVATE_KEY = requireEnv("ADMIN_PRIVATE_KEY");
-const USER_PRIVATE_KEY = requireEnv("TEST_PRIVATE_KEY")
+const USER_PRIVATE_KEY = requireEnv("TEST_PRIVATE_KEY");
+const BUYER_PRIVATE_KEY = requireEnv("TEST2_PRIVATE_KEY");
 const FULLNODE_URL = process.env.APTOS_NODE_URL ?? "http://localhost:8080/v1";
 const FAUCET_URL   = process.env.APTOS_FAUCET_URL ?? "http://localhost:8082/v1";
 
@@ -97,10 +98,14 @@ const adminAccount = Account.fromPrivateKey({
 const userAccount = Account.fromPrivateKey({
   privateKey: new Ed25519PrivateKey(USER_PRIVATE_KEY),
 });
+const buyerAccount = Account.fromPrivateKey({
+  privateKey: new Ed25519PrivateKey(BUYER_PRIVATE_KEY),
+})
 
 /** JWT tokens — obtained from /auth endpoints before running tests. */
 let adminToken: string;
 let userToken: string;
+let buyerToken: string;
 let issuerToken: string; // alias for adminToken — admin is also the issuer in tests
 
 // ─── Auth helpers ────────────────────────────────────────────────────────────
@@ -167,9 +172,10 @@ const TINY_JPEG = Buffer.from(
 // ─── Setup ───────────────────────────────────────────────────────────────────
 
 beforeAll(async () => {
-  [adminToken, userToken] = await Promise.all([
+  [adminToken, userToken, buyerToken] = await Promise.all([
     loginWith(ADMIN_PRIVATE_KEY),
     loginWith(USER_PRIVATE_KEY),
+    loginWith(BUYER_PRIVATE_KEY),
   ]);
   // In test env, admin is also the issuer
   issuerToken = adminToken;
@@ -266,9 +272,7 @@ describe("Workflow A – List with passport", () => {
 
     it("getListingByPassportAddress returns the new listing (status: storing)", async () => {
       const res = await request(app)
-        .post("/api/passports/listings/getByPassportAddress")
-        .set("Authorization", `Bearer ${adminToken}`)
-        .send({ passportObjectAddress })
+        .get(`/api/passports/listings/address/${passportObjectAddress}`)
         .expect(200);
 
       expect(res.body.success).toBe(true);
@@ -320,13 +324,11 @@ describe("Workflow A – List with passport", () => {
       expect(recRes.body.success).toBe(true);
 
       // Verify listing status updated
-      const listRes = await request(app)
-        .post("/api/passports/listings/getByPassportAddress")
-        .set("Authorization", `Bearer ${adminToken}`)
-        .send({ passportObjectAddress })
+      const res = await request(app)
+        .get(`/api/passports/listings/address/${passportObjectAddress}`) // URL parameter format
         .expect(200);
 
-      expect(listRes.body.payload.status).toBe("verifying");
+      expect(res.body.payload.status).toBe("verifying");
     }, 60_000);
   });
 
@@ -362,13 +364,11 @@ describe("Workflow A – List with passport", () => {
 
       expect(recRes.body.success).toBe(true);
 
-      const listRes = await request(app)
-        .post("/api/passports/listings/getByPassportAddress")
-        .set("Authorization", `Bearer ${adminToken}`)
-        .send({ passportObjectAddress })
+      const res = await request(app)
+        .get(`/api/passports/listings/address/${passportObjectAddress}`) // URL parameter format
         .expect(200);
 
-      expect(listRes.body.payload.status).toBe("listed");
+      expect(res.body.payload.status).toBe("listed");
     }, 60_000);
   });
 
@@ -397,13 +397,20 @@ describe("Workflow A – List with passport", () => {
 
     it("getDelistingByPassportAddress returns the pending delist request", async () => {
       const res = await request(app)
-        .post("/api/passports/de-listings/getByPassportAddress")
-        .set("Authorization", `Bearer ${adminToken}`)
-        .send({ passportObjectAddress })
+        .get(`/api/passports/de-listings/address/${passportObjectAddress}`) // URL parameter format
         .expect(200);
 
       expect(res.body.success).toBe(true);
       expect(res.body.payload.status).toBe("pending");
+    });
+
+    it("getListing returns the return_request state", async () => {
+      const res = await request(app)
+        .get(`/api/passports/listings/address/${passportObjectAddress}`) // URL parameter format
+        .expect(200);
+
+      expect(res.body.success).toBe(true);
+      expect(res.body.payload.status).toBe("request_return");
     });
 
     it("non-admin cannot call delist/approve", async () => {
@@ -445,13 +452,11 @@ describe("Workflow A – List with passport", () => {
 
       expect(recRes.body.success).toBe(true);
 
-      const delistRes = await request(app)
-        .post("/api/passports/de-listings/getByPassportAddress")
-        .set("Authorization", `Bearer ${adminToken}`)
-        .send({ passportObjectAddress })
+      const res = await request(app)
+        .get(`/api/passports/de-listings/address/${passportObjectAddress}`)
         .expect(200);
 
-      expect(delistRes.body.payload.status).toBe("returning");
+      expect(res.body.payload.status).toBe("returning");
     }, 60_000);
 
     it("prepareConfirmReceipt returns delist_passport payload", async () => {
@@ -483,19 +488,15 @@ describe("Workflow A – List with passport", () => {
       expect(recRes.body.success).toBe(true);
 
       // Listing → returned/closed
-      const listRes = await request(app)
-        .post("/api/passports/listings/getByPassportAddress")
-        .set("Authorization", `Bearer ${adminToken}`)
-        .send({ passportObjectAddress })
+      const res = await request(app)
+        .get(`/api/passports/listings/address/${passportObjectAddress}`) // URL parameter format
         .expect(200);
 
-      expect(listRes.body.payload.status).toBe("returned");
+      expect(res.body.payload.status).toBe("returned");
 
       // Delist → closed
       const delistRes = await request(app)
-        .post("/api/passports/de-listings/getByPassportAddress")
-        .set("Authorization", `Bearer ${adminToken}`)
-        .send({ passportObjectAddress })
+        .get(`/api/passports/de-listings/address/${passportObjectAddress}`)
         .expect(200);
 
       expect(delistRes.body.payload.status).toBe("closed");
@@ -532,10 +533,8 @@ describe("Workflow B – List without passport", () => {
 
     it("getListingByStatus returns pending listings", async () => {
       const res = await request(app)
-        .post("/api/passports/listings/getByStatus")
-        .set("Authorization", `Bearer ${adminToken}`)
-        .send({ status: "pending" })
-        .expect(200);
+      .get(`/api/passports/listings/status/pending`)
+      .expect(200);
 
       expect(res.body.success).toBe(true);
       expect(Array.isArray(res.body.payload)).toBe(true);
@@ -578,9 +577,7 @@ describe("Workflow B – List without passport", () => {
 
     it("listing status is now verifying", async () => {
       const res = await request(app)
-        .post("/api/passports/listings/getByPassportAddress")
-        .set("Authorization", `Bearer ${adminToken}`)
-        .send({ passportObjectAddress: tempObjectAddress })
+        .get(`/api/passports/listings/address/${tempObjectAddress}`) // URL parameter format
         .expect(200);
 
       expect(res.body.payload.passport_object_address).toBe(tempObjectAddress);
@@ -655,83 +652,81 @@ describe("Workflow B – List without passport", () => {
       expect(recRes.body.success).toBe(true);
 
       // Listing should now be linked to the real passport and status = listed
-      const listRes = await request(app)
-        .post("/api/passports/listings/getByPassportAddress")
-        .set("Authorization", `Bearer ${adminToken}`)
-        .send({ passportObjectAddress: mintedPassportAddress })
+      const res = await request(app)
+        .get(`/api/passports/listings/address/${mintedPassportAddress}`) // URL parameter format
         .expect(200);
 
-      expect(listRes.body.payload.status).toBe("listed");
-      expect(listRes.body.payload.passport_object_address).toBe(mintedPassportAddress);
+
+      expect(res.body.payload.status).toBe("listed");
+      expect(res.body.payload.passport_object_address).toBe(mintedPassportAddress);
     }, 20_000); // 20 seconds
   });
 
-  // ── B4: Delist flow for no-passport listing ───────────────────────────────
-
-  describe("B4 – Delist no-passport listing", () => {
-    it("requestDelist works on the newly minted passport", async () => {
+  // ── B4: Transfer listed passport and verify DB owner update ──────────────
+  //
+  // Uses the passport minted in B3. While it is in LISTING status on-chain,
+  // the current owner (userAccount) transfers it to a freshly-generated
+  // buyer account. recordTransferPassport detects the LISTING status and
+  // must update listing_requests.owner_address to the buyer's address.
+ 
+  describe("B4 – Transfer listed passport updates listing owner in DB", () => {
+    // Generate a brand-new funded account to act as the buyer.
+    // Account.generate() creates a random Ed25519 keypair each run.
+    it("prepareTransfer returns a signable payload for the listed passport", async () => {
       const res = await request(app)
-        .post("/api/passports/delist/request")
+        .post("/api/passports/transfer/prepare")
         .set("Authorization", `Bearer ${userToken}`)
         .send({
           passportObjectAddress: mintedPassportAddress,
-          fullName: "No Passport User",
-          addressLine1: "456 East St",
-          city: "Singapore",
-          state: "SG",
-          postalCode: "654321",
-          country: "Singapore",
+          newOwnerAddress: buyerAccount.accountAddress.toString(),
         })
         .expect(200);
-
+ 
       expect(res.body.success).toBe(true);
+      expect(res.body.payload.function).toContain("transfer");
     });
-
-    it("full delist approve → record closes the listing", async () => {
+ 
+    it("recordTransfer updates listing owner_address to the buyer when passport is in LISTING status", async () => {
+      // Step 1: prepare
       const prepRes = await request(app)
-        .post("/api/passports/delist/approve")
-        .set("Authorization", `Bearer ${adminToken}`)
-        .send({ passportObjectAddress: mintedPassportAddress })
-        .expect(200);
-
-      const txHash = await signAndSubmit(aptos, adminAccount, prepRes.body.payload);
-
-      await request(app)
-        .post("/api/passports/status/record")
-        .set("Authorization", `Bearer ${adminToken}`)
-        .send({ txHash, passportObjectAddress: mintedPassportAddress })
-        .expect(200);
-
-      // User confirms receipt (delist_passport on-chain)
-      const receiptPrepRes = await request(app)
-        .post("/api/passports/receipt/prepare")
+        .post("/api/passports/transfer/prepare")
         .set("Authorization", `Bearer ${userToken}`)
-        .send({ passportObjectAddress: mintedPassportAddress })
+        .send({
+          passportObjectAddress: mintedPassportAddress,
+          newOwnerAddress: buyerAccount.accountAddress.toString(),
+        })
         .expect(200);
-
-      const receiptTxHash = await signAndSubmit(
-        aptos,
-        userAccount,
-        receiptPrepRes.body.payload
+ 
+      // Step 2: user signs and submits the transfer on-chain
+      const txHash = await signAndSubmit(aptos, userAccount, prepRes.body.payload);
+ 
+      // Step 3: record the transfer — backend should detect LISTING status
+      // and update listing_requests.owner_address accordingly
+      const recRes = await request(app)
+        .post("/api/passports/transfer/record")
+        .set("Authorization", `Bearer ${userToken}`)
+        .send({
+          txHash,
+          passportObjectAddress: mintedPassportAddress,
+          newOwnerAddress: buyerAccount.accountAddress.toString(),
+        })
+        .expect(200);
+ 
+      expect(recRes.body.success).toBe(true);
+ 
+      // Step 4: verify the DB listing now shows the buyer as owner
+      const res = await request(app)
+        .get(`/api/passports/listings/address/${mintedPassportAddress}`) // URL parameter format
+        .expect(200);
+ 
+      expect(res.body.success).toBe(true);
+      // Status should remain listed — the transfer does not change listing status
+      expect(res.body.payload.status).toBe("listed");
+      // owner_address must now be the buyer, not the original user
+      expect(res.body.payload.owner_address).toBe(
+        buyerAccount.accountAddress.toString().toLowerCase()
       );
-
-      const receiptRecRes = await request(app)
-        .post("/api/passports/receipt/record")
-        .set("Authorization", `Bearer ${userToken}`)
-        .send({ txHash: receiptTxHash, passportObjectAddress: mintedPassportAddress })
-        .expect(200);
-
-      expect(receiptRecRes.body.success).toBe(true);
-
-      // Confirm statuses
-      const listRes = await request(app)
-        .post("/api/passports/listings/getByPassportAddress")
-        .set("Authorization", `Bearer ${adminToken}`)
-        .send({ passportObjectAddress: mintedPassportAddress })
-        .expect(200);
-
-      expect(listRes.body.payload.status).toBe("returned");
-    }, 120_000);
+    }, 60_000);
   });
 });
 
@@ -787,22 +782,6 @@ describe("Auth guards and input validation", () => {
       .expect(400);
   });
 
-  it("returns 400 when getListingByStatus is called without status", async () => {
-    await request(app)
-      .post("/api/passports/listings/getByStatus")
-      .set("Authorization", `Bearer ${adminToken}`)
-      .send({})
-      .expect(400);
-  });
-
-  it("returns 400 when getDelistingsByStatus is called without status", async () => {
-    await request(app)
-      .post("/api/passports/de-listings/getByStatus")
-      .set("Authorization", `Bearer ${adminToken}`)
-      .send({})
-      .expect(400);
-  });
-
   it("GET /api/passports/:addr returns 404 for a non-existent passport", async () => {
     // Random well-formed Aptos address that was never minted
     await request(app)
@@ -826,9 +805,8 @@ describe("Metadata update flow", () => {
   it("prepareUpdateMetadata returns a signable payload", async () => {
     // We need at least one live passport address; skip gracefully if not available
     const discoverRes = await request(app)
-      .post("/api/passports/listings/getByStatus")
-      .set("Authorization", `Bearer ${adminToken}`)
-      .send({ status: "listed" });
+      .get(`/api/passports/listings/status/listed`)
+      .expect(200);
 
     if (!discoverRes.body.success || !discoverRes.body.payload?.length) {
       console.warn("[skip] No listed passports found; skipping metadata update test.");
