@@ -759,10 +759,10 @@ export async function recordMintListPassportHandler(req: Request, res: Response)
 
     const body = req.body as RecordMintListRequestBody;
 
-    if (!body.txHash || !body.passportObjectAddress || !body.tempPassportObjectAddress || !body.ownerAddress) {
+    if (!body.txHash || !body.ownerAddress) {
       return res.status(400).json({
         success: false,
-        error: "txHash, passportObjectAddress, tempPassportObjectAddress and ownerAddress are required",
+        error: "txHash, passportObjectAddress and ownerAddress are required",
       });
     }
 

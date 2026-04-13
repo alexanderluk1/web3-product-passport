@@ -13,6 +13,8 @@ export const PASSPORT_LIST_FN = `${MODULE_ADDRESS}::passport::list_passport`;
 export const PASSPORT_DELIST_FN = `${MODULE_ADDRESS}::passport::delist_passport`;
 export const PASSPORT_MINTLIST_FN = `${MODULE_ADDRESS}::passport::mint_listing`;
 
+// mintList event
+export const PASSPORT_MINTLIST_EV = `${MODULE_ADDRESS}::passport::PassportMintListed`;
 //status values
 export const STATUS_ACTIVE    = 1;
 export const STATUS_SUSPENDED = 2;

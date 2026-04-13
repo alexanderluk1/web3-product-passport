@@ -7,14 +7,21 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
-import { Shield, Package, ArrowRightLeft, Search, User, Eye, Calendar, Building, Copy, ExternalLink, Image as ImageIcon, RefreshCw, Loader2, Lock } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Shield, Package, ArrowRightLeft, Search, User, Eye, Calendar,
+  Copy, ExternalLink, Image as ImageIcon, RefreshCw, Loader2, Lock,
+  Store, Truck, RotateCcw, MapPin, CheckCircle2, Clock, AlertCircle,
+} from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useWallet } from "@aptos-labs/wallet-adapter-react";
 import { showSuccess, showError } from "@/utils/toast";
 
-// Pinata IPFS Gateway Configuration
 const PINATA_GATEWAY_URL = "https://amaranth-passive-chicken-549.mypinata.cloud";
+const BASE_URL = "http://localhost:3001";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Product {
   transactionVersion: string;
@@ -26,24 +33,15 @@ interface Product {
   metadataUri: string;
   transferable: boolean;
   mintedAt: number;
-  // Add passport object address for transfers
   passportObjectAddr?: string;
-}
-
-interface ProductsResponse {
-  source: "cache" | "chain";
-  syncedAt: number;
-  products: Product[];
+  onChainStatus?: number; // 1=ACTIVE, 4=STORING, 5=VERIFYING, 6=LISTING, 7=RETURNING
 }
 
 interface ProductMetadata {
   name: string;
   description: string;
   image: string;
-  attributes: Array<{
-    trait_type: string;
-    value: string;
-  }>;
+  attributes: Array<{ trait_type: string; value: string }>;
 }
 
 interface EnrichedProduct extends Product {
@@ -52,443 +50,374 @@ interface EnrichedProduct extends Product {
   metadataError?: boolean;
 }
 
-interface TransferPrepareResponse {
-  success: boolean;
-  payload: {
-    function: string;
-    functionArguments: string[];
-  };
+interface ListingRequest {
+  id: string;
+  passport_object_address: string;
+  owner_address: string;
+  status: string;
+  has_passport: boolean;
+  created_at: string;
+  updated_at: string;
 }
+
+interface DelistRequest {
+  id: string;
+  passport_object_address: string;
+  requester_address: string;
+  address_line1: string;
+  address_line2?: string;
+  city: string;
+  state?: string;
+  postal_code: string;
+  country: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ShippingAddress {
+  addressLine1: string;
+  addressLine2: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  country: string;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const LISTING_STATUS_LABELS: Record<string, { label: string; color: string }> = {
+  pending:        { label: "Pending Shipment",  color: "bg-yellow-100 text-yellow-800" },
+  verifying:      { label: "Under Verification",color: "bg-blue-100 text-blue-800"   },
+  listed:         { label: "Live on Market",    color: "bg-green-100 text-green-800"  },
+  request_return: { label: "Return Requested",  color: "bg-orange-100 text-orange-800"},
+  returning:      { label: "Being Returned",    color: "bg-purple-100 text-purple-800"},
+  returned:       { label: "Returned",          color: "bg-gray-100 text-gray-800"    },
+};
+
+const formatDate = (ts: string | number) =>
+  new Date(ts).toLocaleDateString("en-US", {
+    year: "numeric", month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 const UserDashboard = () => {
   const { user, accessToken } = useAuth();
   const { signAndSubmitTransaction } = useWallet();
-  const [ownedPassports, setOwnedPassports] = useState<EnrichedProduct[]>([]);
-  const [transferAddress, setTransferAddress] = useState("");
-  const [selectedPassport, setSelectedPassport] = useState<EnrichedProduct | null>(null);
-  const [isTransferring, setIsTransferring] = useState(false);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [productsLoading, setProductsLoading] = useState(false);
-  const [productsSource, setProductsSource] = useState<"cache" | "chain" | null>(null);
+
+  // Passport state
+  const [ownedPassports, setOwnedPassports]     = useState<EnrichedProduct[]>([]);
+  const [productsLoading, setProductsLoading]   = useState(false);
+  const [productsSource, setProductsSource]     = useState<"cache" | "chain" | null>(null);
   const [productsSyncedAt, setProductsSyncedAt] = useState<number | null>(null);
+
+  // Transfer state
+  const [selectedPassport, setSelectedPassport] = useState<EnrichedProduct | null>(null);
+  const [transferAddress, setTransferAddress]   = useState("");
+  const [isTransferring, setIsTransferring]     = useState(false);
+  const [isModalOpen, setIsModalOpen]           = useState(false);
+
+  // Marketplace – list state
+  const [listPassportAddr, setListPassportAddr] = useState("");
+  const [isListing, setIsListing]               = useState(false);
+  const [isListingNoPassport, setIsListingNoPassport] = useState(false);
+
+  // Marketplace – my listings state
+  const [myListings, setMyListings]             = useState<ListingRequest[]>([]);
+  const [listingsLoading, setListingsLoading]   = useState(false);
+
+  // Delist / return state
+  const [delistingPassportAddr, setDelistingPassportAddr] = useState<string | null>(null);
+  const [shippingAddress, setShippingAddress]   = useState<ShippingAddress>({
+    addressLine1: "", addressLine2: "", city: "", state: "", postalCode: "", country: "",
+  });
+  const [isDelisting, setIsDelisting]           = useState(false);
+
+  // Receipt state
+  const [isConfirmingReceipt, setIsConfirmingReceipt] = useState<string | null>(null);
 
   useEffect(() => {
     if (user && accessToken) {
       fetchOwnedPassports();
+      fetchMyListings();
     }
   }, [user, accessToken]);
 
-  // Helper function to convert IPFS URI to Pinata gateway URL
-  const convertIPFSToHTTP = (uri: string): string => {
-    if (!uri || typeof uri !== 'string') {
-      console.warn("⚠️ Invalid URI provided to convertIPFSToHTTP:", uri);
-      return "";
-    }
+  // ── IPFS helpers ────────────────────────────────────────────────────────────
 
-    if (uri.startsWith('ipfs://')) {
-      const cid = uri.replace('ipfs://', '');
-      const pinataUrl = `${PINATA_GATEWAY_URL}/ipfs/${cid}`;
-      console.log(`🔗 Converting IPFS URI to Pinata gateway: ${uri} -> ${pinataUrl}`);
-      return pinataUrl;
-    }
-    
-    if (uri.startsWith('http://') || uri.startsWith('https://')) {
-      return uri;
-    }
-    
-    const pinataUrl = `${PINATA_GATEWAY_URL}/ipfs/${uri}`;
-    console.log(`🔗 Converting CID to Pinata gateway: ${uri} -> ${pinataUrl}`);
-    return pinataUrl;
+  const convertIPFSToHTTP = (uri: string): string => {
+    if (!uri) return "";
+    if (uri.startsWith("ipfs://")) return `${PINATA_GATEWAY_URL}/ipfs/${uri.replace("ipfs://", "")}`;
+    if (uri.startsWith("http://") || uri.startsWith("https://")) return uri;
+    return `${PINATA_GATEWAY_URL}/ipfs/${uri}`;
   };
 
-  // Helper function to fetch metadata from IPFS via Pinata gateway
   const fetchMetadataFromIPFS = async (metadataUri: string): Promise<ProductMetadata | null> => {
     try {
-      console.log("📡 Fetching metadata from IPFS:", metadataUri);
-      
-      if (!metadataUri || typeof metadataUri !== 'string') {
-        console.warn("⚠️ Invalid metadata URI:", metadataUri);
-        return null;
-      }
-      
-      const fetchUrl = convertIPFSToHTTP(metadataUri);
-      
-      if (!fetchUrl) {
-        console.warn("⚠️ Could not convert metadata URI to HTTP URL:", metadataUri);
-        return null;
-      }
-      
-      console.log("📡 Fetching from Pinata gateway:", fetchUrl);
-      
-      const response = await fetch(fetchUrl, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-        },
-      });
-      
-      if (!response.ok) {
-        console.error("❌ IPFS fetch failed:", response.status, response.statusText);
-        return null;
-      }
-      
-      const metadata = await response.json();
-      console.log("✅ IPFS metadata fetched via Pinata:", metadata);
-      
-      return metadata;
-    } catch (error) {
-      console.error("💥 Error fetching IPFS metadata:", error);
-      return null;
-    }
+      const url = convertIPFSToHTTP(metadataUri);
+      if (!url) return null;
+      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
   };
 
-  // Helper function to enrich products with metadata
-  const enrichProductsWithMetadata = async (products: Product[]): Promise<EnrichedProduct[]> => {
-    console.log(`🔍 Enriching ${products.length} owned products with IPFS metadata via Pinata gateway...`);
-    
-    const enrichedProducts: EnrichedProduct[] = products.map(product => ({
-      ...product,
-      metadataLoading: true,
-      metadataError: false,
+  const enrichProductsWithMetadata = async (products: Product[]) => {
+    const enriched: EnrichedProduct[] = products.map(p => ({ ...p, metadataLoading: true, metadataError: false }));
+    setOwnedPassports(enriched);
+    await Promise.all(products.map(async (product, index) => {
+      const metadata = await fetchMetadataFromIPFS(product.metadataUri);
+      setOwnedPassports(prev => {
+        const updated = [...prev];
+        updated[index] = { ...updated[index], metadata: metadata ?? undefined, metadataLoading: false, metadataError: !metadata };
+        return updated;
+      });
     }));
-    
-    // Update state immediately to show loading indicators
-    setOwnedPassports(enrichedProducts);
-    
-    // Fetch metadata for each product
-    const metadataPromises = products.map(async (product, index) => {
-      try {
-        const metadata = await fetchMetadataFromIPFS(product.metadataUri);
-        
-        // Update the specific product in the array
-        setOwnedPassports(prevProducts => {
-          const updated = [...prevProducts];
-          updated[index] = {
-            ...updated[index],
-            metadata: metadata || undefined,
-            metadataLoading: false,
-            metadataError: !metadata,
-          };
-          return updated;
-        });
-        
-        return { index, metadata };
-      } catch (error) {
-        console.error(`💥 Error fetching metadata for product ${product.serialNumber}:`, error);
-        
-        // Update with error state
-        setOwnedPassports(prevProducts => {
-          const updated = [...prevProducts];
-          updated[index] = {
-            ...updated[index],
-            metadataLoading: false,
-            metadataError: true,
-          };
-          return updated;
-        });
-        
-        return { index, metadata: null };
-      }
-    });
-    
-    // Wait for all metadata to be fetched
-    await Promise.all(metadataPromises);
-    
-    console.log("✅ Metadata enrichment completed for owned products via Pinata gateway");
-    return enrichedProducts;
   };
 
-  const fetchOwnedPassports = async (showRefreshIndicator = false, context = "initial") => {
+  // ── Fetch owned passports ────────────────────────────────────────────────────
+
+  const fetchOwnedPassports = async (showIndicator = false) => {
+    if (showIndicator) setProductsLoading(true);
     try {
-      if (showRefreshIndicator) {
-        setProductsLoading(true);
-      }
-      
-      console.log(`📡 Fetching owned passports with GET /api/passports/owned... (Context: ${context})`);
-      console.log("📡 Using token:", accessToken?.substring(0, 20) + "...");
-      
-      const response = await fetch("http://localhost:3001/api/passports/owned", {
-        headers: {
-          "Authorization": `Bearer ${accessToken}`,
-        },
+      const res = await fetch(`${BASE_URL}/api/passports/owned`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
       });
-      
-      console.log(`📡 Owned passports response status: ${response.status} (Context: ${context})`);
-      console.log("📡 Owned passports response headers:", Object.fromEntries(response.headers.entries()));
-      
-      if (response.ok) {
-        const data: ProductsResponse = await response.json();
-        console.log(`✅ Owned passports response data (Context: ${context}):`, data);
-        console.log(`📊 Found ${data.products.length} owned products from ${data.source} (Context: ${context})`);
-        console.log(`🕒 Data synced at: ${new Date(data.syncedAt).toISOString()} (Context: ${context})`);
-        
-        // Log each product for detailed tracking
-        data.products.forEach((product, index) => {
-          console.log(`   ${index + 1}. Serial: ${product.serialNumber} - Owner: ${product.ownerAddress.substring(0, 10)}... - Minted: ${new Date(product.mintedAt).toISOString()} - Transferable: ${product.transferable}`);
-        });
-        
+      if (res.ok) {
+        const data = await res.json();
         setProductsSource(data.source);
         setProductsSyncedAt(data.syncedAt);
-        
-        // Enrich products with IPFS metadata
         await enrichProductsWithMetadata(data.products);
-        
-        if (showRefreshIndicator) {
-          const message = `Owned passports refreshed! Found ${data.products.length} products from ${data.source}.`;
-          console.log(`🎉 ${message} (Context: ${context})`);
-          showSuccess(message);
-        }
+        if (showIndicator) showSuccess(`Refreshed! ${data.products.length} passport(s) found.`);
       } else {
-        const errorText = await response.text();
-        console.error(`❌ Failed to fetch owned passports (Context: ${context}):`, {
-          status: response.status,
-          statusText: response.statusText,
-          body: errorText
-        });
-        
-        // Show specific error messages
-        if (response.status === 401) {
-          showError("Authentication failed - please login again");
-        } else if (response.status === 403) {
-          showError("Access denied - user role required");
-        } else if (response.status === 404) {
-          showError("Owned passports API not found - check backend configuration");
-        } else {
-          showError("Failed to fetch owned passports");
-        }
+        showError("Failed to fetch owned passports");
       }
-    } catch (error) {
-      console.error(`💥 Error fetching owned passports (Context: ${context}):`, error);
-      showError("Network error fetching owned passports");
-    } finally {
-      if (showRefreshIndicator) {
-        setProductsLoading(false);
-      }
-    }
+    } catch { showError("Network error fetching passports"); }
+    finally { if (showIndicator) setProductsLoading(false); }
   };
 
-  // Helper function to validate wallet address
-  const validateWalletAddress = (address: string) => {
-    if (!address) return false;
-    
-    // Basic validation for Aptos wallet address format
-    const aptosAddressRegex = /^0x[a-fA-F0-9]{1,64}$/;
-    return aptosAddressRegex.test(address);
+  // ── Fetch my listings ────────────────────────────────────────────────────────
+
+  const fetchMyListings = async () => {
+    setListingsLoading(true);
+    try {
+      // Fetch all non-returned listing statuses for the current user
+      const statuses = ["pending", "verifying", "listed", "request_return", "returning", "returned"];
+      const results = await Promise.all(
+        statuses.map(s =>
+          fetch(`${BASE_URL}/api/passports/listings/status/${s}`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          }).then(r => r.ok ? r.json() : { payload: [] })
+        )
+      );
+      // Filter to only listings owned by this user
+      const all: ListingRequest[] = results.flatMap(r => r.payload ?? []);
+      const mine = all.filter(l => l.owner_address === user?.walletAddress);
+      setMyListings(mine);
+    } catch { showError("Failed to fetch listings"); }
+    finally { setListingsLoading(false); }
   };
 
-  // New 2-step transfer function
+  // ── Validate wallet address ──────────────────────────────────────────────────
+
+  const validateWalletAddress = (addr: string) => /^0x[a-fA-F0-9]{1,64}$/.test(addr);
+
+  // ── TRANSFER ─────────────────────────────────────────────────────────────────
+
   const handleTransfer = async (passport: EnrichedProduct) => {
-    if (!transferAddress.trim()) {
-      showError("Please enter a valid wallet address");
-      return;
-    }
-
-    if (!validateWalletAddress(transferAddress)) {
+    if (!transferAddress.trim() || !validateWalletAddress(transferAddress)) {
       showError("Please enter a valid wallet address (0x...)");
       return;
     }
-
-    if (!passport.passportObjectAddr && !passport.transactionHash) {
-      showError("Missing passport object address for transfer");
-      return;
-    }
-
-    // Use passportObjectAddr if available, otherwise fall back to transactionHash
     const passportObjectAddress = passport.passportObjectAddr || passport.transactionHash;
-
     setIsTransferring(true);
-    
     try {
-      console.log("🔄 Starting 2-step transfer process...");
-      console.log("📦 Passport Object Address:", passportObjectAddress);
-      console.log("👤 New Owner Address:", transferAddress);
-      
-      // Step 1: Prepare transfer
-      console.log("📡 Step 1: Preparing transfer...");
-      const prepareResponse = await fetch("http://localhost:3001/api/passports/transfer/prepare", {
+      const prepRes = await fetch(`${BASE_URL}/api/passports/transfer/prepare`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          passportObjectAddress: passportObjectAddress,
-          newOwnerAddress: transferAddress,
-        }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ passportObjectAddress, newOwnerAddress: transferAddress }),
+      });
+      if (!prepRes.ok) throw new Error("prepare");
+      const prepData = await prepRes.json();
+      if (!prepData.success || !prepData.payload) throw new Error("Invalid prepare response");
+
+      const txRes = await signAndSubmitTransaction({
+        data: { function: prepData.payload.function, functionArguments: prepData.payload.functionArguments },
+        options: { maxGasAmount: 10000, gasUnitPrice: 100, expirationSecondsFromNow: 60 },
       });
 
-      console.log("📡 Prepare transfer response status:", prepareResponse.status);
-      console.log("📡 Prepare transfer response headers:", Object.fromEntries(prepareResponse.headers.entries()));
-
-      if (!prepareResponse.ok) {
-        const errorText = await prepareResponse.text();
-        console.error("❌ Prepare transfer failed:", {
-          status: prepareResponse.status,
-          statusText: prepareResponse.statusText,
-          body: errorText
-        });
-        throw new Error(`Failed to prepare transfer: ${prepareResponse.status} ${prepareResponse.statusText}`);
-      }
-
-      const prepareData: TransferPrepareResponse = await prepareResponse.json();
-      console.log("✅ Transfer prepared:", prepareData);
-
-      if (!prepareData.success || !prepareData.payload) {
-        throw new Error("Invalid prepare response: missing payload");
-      }
-
-      // Step 2: Submit blockchain transaction
-      console.log("🔗 Step 2: Submitting blockchain transaction...");
-      console.log("🔗 Transaction payload:", prepareData.payload);
-      
-      const transactionPayload = {
-        data: {
-          function: prepareData.payload.function,
-          functionArguments: prepareData.payload.functionArguments,
-        },
-        options: {
-          maxGasAmount: 10000,
-          gasUnitPrice: 100,
-          expirationSecondsFromNow: 60,
-        },
-      };
-      
-      console.log("🔗 Final transaction payload:", transactionPayload);
-      
-      const transactionResponse = await signAndSubmitTransaction(transactionPayload);
-      console.log("✅ Blockchain transaction submitted:", transactionResponse);
-      console.log("🔗 Transaction hash:", transactionResponse.hash);
-
-      // Step 3: Record transfer in backend
-      console.log("📡 Step 3: Recording transfer in backend...");
-      const recordResponse = await fetch("http://localhost:3001/api/passports/transfer/record", {
+      const recRes = await fetch(`${BASE_URL}/api/passports/transfer/record`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          txHash: transactionResponse.hash,
-          passportObjectAddress: passportObjectAddress,
-          newOwnerAddress: transferAddress,
-        }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ txHash: txRes.hash, passportObjectAddress, newOwnerAddress: transferAddress }),
       });
+      if (recRes.ok) showSuccess(`Transferred! TX: ${txRes.hash.substring(0, 10)}...`);
+      else showError("Transferred on-chain but failed to record in backend");
 
-      console.log("📡 Record transfer response status:", recordResponse.status);
-
-      if (!recordResponse.ok) {
-        const errorText = await recordResponse.text();
-        console.error("❌ Record transfer failed:", {
-          status: recordResponse.status,
-          statusText: recordResponse.statusText,
-          body: errorText
-        });
-        // Don't throw here - the blockchain transaction succeeded
-        showError("Transfer completed on blockchain but failed to record in backend");
-      } else {
-        const recordData = await recordResponse.json();
-        console.log("✅ Transfer recorded:", recordData);
-        showSuccess(`Passport transferred successfully! TX: ${transactionResponse.hash.substring(0, 10)}...`);
-      }
-
-      // Reset form and refresh data
       setTransferAddress("");
       setSelectedPassport(null);
-      
-      // Refresh the passports list after successful transfer
-      console.log("🔄 Refreshing passports list after successful transfer...");
-      setTimeout(() => {
-        fetchOwnedPassports(true, "post-transfer");
-      }, 2000); // Wait 2 seconds for blockchain to process
-
-    } catch (error) {
-      console.error("💥 Transfer error:", error);
-      
-      // Provide specific error messages
-      if (error.message?.includes("User rejected") || error.message?.includes("rejected")) {
-        showError("Transfer cancelled by user");
-      } else if (error.message?.includes("prepare")) {
-        showError("Failed to prepare transfer. Please try again.");
-      } else if (error.message?.includes("Invalid payload")) {
-        showError("Invalid transfer payload received from server");
-      } else {
-        showError("Transfer failed. Please try again.");
-      }
-    } finally {
-      setIsTransferring(false);
-    }
+      setTimeout(() => fetchOwnedPassports(true), 2000);
+    } catch (err: any) {
+      if (err.message?.includes("rejected")) showError("Transfer cancelled");
+      else if (err.message === "prepare") showError("Failed to prepare transfer");
+      else showError("Transfer failed. Please try again.");
+    } finally { setIsTransferring(false); }
   };
 
-  // Helper function to format timestamp
-  const formatDate = (timestamp: number) => {
-    return new Date(timestamp).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
+  // ── LIST WITH PASSPORT ────────────────────────────────────────────────────────
 
-  // Helper function to get product display name from metadata
-  const getProductDisplayName = (product: EnrichedProduct) => {
-    if (product.metadataLoading) {
-      return `Loading...`;
-    }
-    
-    if (product.metadata?.name) {
-      return product.metadata.name;
-    }
-    
-    if (product.metadataError) {
-      return `Product ${product.serialNumber} (metadata failed)`;
-    }
-    
-    return `Product ${product.serialNumber}`;
-  };
-
-  // Helper function to get product brand from metadata
-  const getProductBrand = (product: EnrichedProduct) => {
-    if (product.metadataLoading || !product.metadata) {
-      return null;
-    }
-    
-    const brandAttribute = product.metadata.attributes?.find(attr => 
-      attr.trait_type.toLowerCase() === 'brand'
-    );
-    
-    return brandAttribute?.value || null;
-  };
-
-  // Helper function to get product category from metadata
-  const getProductCategory = (product: EnrichedProduct) => {
-    if (product.metadataLoading || !product.metadata) {
-      return null;
-    }
-    
-    const categoryAttribute = product.metadata.attributes?.find(attr => 
-      attr.trait_type.toLowerCase() === 'category'
-    );
-    
-    return categoryAttribute?.value || null;
-  };
-
-  // Helper function to handle product details modal
-  const handleViewProductDetails = (product: EnrichedProduct) => {
-    setSelectedPassport(product);
-    setIsModalOpen(true);
-  };
-
-  // Helper function to copy text to clipboard
-  const copyToClipboard = async (text: string, label: string) => {
+  const handleListWithPassport = async () => {
+    if (!listPassportAddr.trim()) { showError("Enter a passport object address"); return; }
+    setIsListing(true);
     try {
-      await navigator.clipboard.writeText(text);
-      showSuccess(`${label} copied to clipboard!`);
-    } catch (error) {
-      console.error("Failed to copy to clipboard:", error);
-      showError("Failed to copy to clipboard");
-    }
+      // Step 1: prepare
+      const prepRes = await fetch(`${BASE_URL}/api/passports/list/passport-prepare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ passportObjectAddress: listPassportAddr }),
+      });
+      if (!prepRes.ok) { showError("Failed to prepare listing"); return; }
+      const prepData = await prepRes.json();
+      if (!prepData.success || !prepData.payload) throw new Error("Invalid prepare response");
+
+      // Step 2: sign & submit on-chain
+      const txRes = await signAndSubmitTransaction({
+        data: { function: prepData.payload.function, functionArguments: prepData.payload.functionArguments },
+        options: { maxGasAmount: 10000, gasUnitPrice: 100, expirationSecondsFromNow: 60 },
+      });
+
+      // Step 3: record
+      const recRes = await fetch(`${BASE_URL}/api/passports/list/passport-record`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ txHash: txRes.hash, passportObjectAddress: listPassportAddr }),
+      });
+      if (recRes.ok) {
+        showSuccess("Listing submitted! Ship your product to LuxPass.");
+        setListPassportAddr("");
+        setTimeout(() => fetchMyListings(), 1500);
+      } else {
+        showError("Listed on-chain but failed to record in backend");
+      }
+    } catch (err: any) {
+      if (err.message?.includes("rejected")) showError("Listing cancelled");
+      else showError("Listing failed. Please try again.");
+    } finally { setIsListing(false); }
   };
+
+  // ── LIST WITHOUT PASSPORT ─────────────────────────────────────────────────────
+
+  const handleListWithoutPassport = async () => {
+    setIsListingNoPassport(true);
+    try {
+      const res = await fetch(`${BASE_URL}/api/passports/list/no-passport-record`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        showSuccess(`Listing submitted! LuxPass will verify your item. Ref: ${data.tempObjectAddress?.substring(0, 16)}...`);
+        setTimeout(() => fetchMyListings(), 1500);
+      } else {
+        showError("Failed to submit listing request");
+      }
+    } catch { showError("Network error"); }
+    finally { setIsListingNoPassport(false); }
+  };
+
+  // ── DELIST REQUEST ────────────────────────────────────────────────────────────
+
+  const handleDelistRequest = async (passportAddr: string) => {
+    const { addressLine1, city, postalCode, country } = shippingAddress;
+    if (!addressLine1 || !city || !postalCode || !country) {
+      showError("Please fill in all required shipping address fields");
+      return;
+    }
+    setIsDelisting(true);
+    try {
+      const res = await fetch(`${BASE_URL}/api/passports/delist/request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({
+          passportObjectAddress: passportAddr,
+          addressLine1: shippingAddress.addressLine1,
+          addressLine2: shippingAddress.addressLine2 || undefined,
+          city: shippingAddress.city,
+          state: shippingAddress.state,
+          postalCode: shippingAddress.postalCode,
+          country: shippingAddress.country,
+        }),
+      });
+      if (res.ok) {
+        showSuccess("Delist request submitted! Admin will review.");
+        setDelistingPassportAddr(null);
+        setShippingAddress({ addressLine1: "", addressLine2: "", city: "", state: "", postalCode: "", country: "" });
+        setTimeout(() => fetchMyListings(), 1500);
+      } else {
+        const err = await res.json();
+        showError(err.error ?? "Failed to submit delist request");
+      }
+    } catch { showError("Network error"); }
+    finally { setIsDelisting(false); }
+  };
+
+  // ── CONFIRM RECEIPT ───────────────────────────────────────────────────────────
+
+  const handleConfirmReceipt = async (passportAddr: string) => {
+    setIsConfirmingReceipt(passportAddr);
+    try {
+      // Step 1: prepare
+      const prepRes = await fetch(`${BASE_URL}/api/passports/receipt/prepare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ passportObjectAddress: passportAddr }),
+      });
+      if (!prepRes.ok) { showError("Failed to prepare receipt confirmation"); return; }
+      const prepData = await prepRes.json();
+      if (!prepData.success || !prepData.payload) throw new Error("Invalid prepare response");
+
+      // Step 2: sign & submit on-chain
+      const txRes = await signAndSubmitTransaction({
+        data: { function: prepData.payload.function, functionArguments: prepData.payload.functionArguments },
+        options: { maxGasAmount: 10000, gasUnitPrice: 100, expirationSecondsFromNow: 60 },
+      });
+
+      // Step 3: record
+      const recRes = await fetch(`${BASE_URL}/api/passports/receipt/record`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ txHash: txRes.hash, passportObjectAddress: passportAddr }),
+      });
+      if (recRes.ok) {
+        showSuccess("Receipt confirmed! Your passport is now active.");
+        setTimeout(() => fetchMyListings(), 1500);
+      } else {
+        showError("Confirmed on-chain but failed to record in backend");
+      }
+    } catch (err: any) {
+      if (err.message?.includes("rejected")) showError("Confirmation cancelled");
+      else showError("Failed to confirm receipt. Please try again.");
+    } finally { setIsConfirmingReceipt(null); }
+  };
+
+  // ── Display helpers ───────────────────────────────────────────────────────────
+
+  const copyToClipboard = async (text: string, label: string) => {
+    try { await navigator.clipboard.writeText(text); showSuccess(`${label} copied!`); }
+    catch { showError("Failed to copy"); }
+  };
+
+  const getProductDisplayName = (p: EnrichedProduct) => {
+    if (p.metadataLoading) return "Loading...";
+    return p.metadata?.name ?? `Product ${p.serialNumber}`;
+  };
+
+  const getAttr = (p: EnrichedProduct, key: string) =>
+    p.metadata?.attributes?.find(a => a.trait_type.toLowerCase() === key)?.value ?? null;
+
+  // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50">
@@ -504,12 +433,8 @@ const UserDashboard = () => {
               <User className="mr-1 h-3 w-3" />
               {user?.role}
             </Badge>
-            <Link to="/verify">
-              <Button variant="outline">Verify Product</Button>
-            </Link>
-            <Link to="/dashboard">
-              <Button variant="outline">Dashboard</Button>
-            </Link>
+            <Link to="/verify"><Button variant="outline">Verify Product</Button></Link>
+            <Link to="/dashboard"><Button variant="outline">Dashboard</Button></Link>
           </div>
         </div>
       </nav>
@@ -518,30 +443,32 @@ const UserDashboard = () => {
         <div className="max-w-6xl mx-auto">
           <div className="mb-8">
             <h1 className="text-3xl font-bold text-gray-900 mb-2">User Dashboard</h1>
-            <p className="text-gray-600">Manage your owned product passports</p>
+            <p className="text-gray-600">Manage your product passports and marketplace listings</p>
             <div className="mt-2 text-sm text-gray-500">
-              User ID: {user?.id} | Wallet: {user?.walletAddress?.substring(0, 10)}...
+              Wallet: {user?.walletAddress?.substring(0, 10)}...
               {productsSource && productsSyncedAt && (
-                <span className="ml-4">
-                  Data from {productsSource} • Last synced: {formatDate(productsSyncedAt)}
-                </span>
+                <span className="ml-4">Data from {productsSource} • Synced: {formatDate(productsSyncedAt)}</span>
               )}
             </div>
           </div>
 
           <Tabs defaultValue="owned" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-2 bg-white/80 backdrop-blur-sm">
+            <TabsList className="grid w-full grid-cols-3 bg-white/80 backdrop-blur-sm">
               <TabsTrigger value="owned" className="flex items-center">
                 <Package className="mr-2 h-4 w-4" />
                 My Passports ({ownedPassports.length})
               </TabsTrigger>
+              <TabsTrigger value="marketplace" className="flex items-center">
+                <Store className="mr-2 h-4 w-4" />
+                Marketplace ({myListings.length})
+              </TabsTrigger>
               <TabsTrigger value="verify" className="flex items-center">
                 <Search className="mr-2 h-4 w-4" />
-                Verify Products
+                Verify
               </TabsTrigger>
             </TabsList>
 
-            {/* Owned Passports Tab */}
+            {/* ─── OWNED PASSPORTS TAB ──────────────────────────────────────────── */}
             <TabsContent value="owned">
               <Card className="border-0 shadow-xl bg-white/80 backdrop-blur-sm">
                 <CardHeader>
@@ -551,159 +478,94 @@ const UserDashboard = () => {
                         <Package className="mr-3 h-6 w-6 text-blue-600" />
                         My Product Passports ({ownedPassports.length})
                       </CardTitle>
-                      <CardDescription>
-                        View and manage your owned product passports
-                        {productsSource && productsSyncedAt && (
-                          <span className="block mt-1 text-xs">
-                            Data from {productsSource} • Last synced: {formatDate(productsSyncedAt)}
-                          </span>
-                        )}
-                      </CardDescription>
+                      <CardDescription>View, transfer, and manage your owned passports</CardDescription>
                     </div>
-                    <Button 
-                      variant="outline" 
-                      size="sm"
-                      onClick={() => fetchOwnedPassports(true, "manual-refresh")}
-                      disabled={productsLoading}
-                    >
-                      <RefreshCw className={`mr-2 h-4 w-4 ${productsLoading ? 'animate-spin' : ''}`} />
+                    <Button variant="outline" size="sm" onClick={() => fetchOwnedPassports(true)} disabled={productsLoading}>
+                      <RefreshCw className={`mr-2 h-4 w-4 ${productsLoading ? "animate-spin" : ""}`} />
                       {productsLoading ? "Refreshing..." : "Refresh"}
                     </Button>
                   </div>
                 </CardHeader>
                 <CardContent>
                   {ownedPassports.length === 0 ? (
-                    <div className="text-center py-8">
+                    <div className="text-center py-12">
                       <Package className="mx-auto h-12 w-12 text-gray-400 mb-4" />
                       <p className="text-gray-500">You don't own any product passports yet.</p>
-                      <p className="text-xs text-gray-400 mt-2">Check console for API response details</p>
                     </div>
                   ) : (
                     <div className="space-y-4">
                       {ownedPassports.map((passport) => (
-                        <div 
-                          key={`${passport.transactionHash}-${passport.serialNumber}`} 
-                          className="border rounded-lg p-4 bg-white/50 cursor-pointer hover:bg-white/70 hover:shadow-md transition-all duration-200"
-                          onClick={() => handleViewProductDetails(passport)}
-                          title="Click to view product details"
+                        <div
+                          key={passport.passportObjectAddr ?? `${passport.transactionHash}-${passport.serialNumber}`}
+                          className="border rounded-lg p-4 bg-white/50 cursor-pointer hover:bg-white/70 hover:shadow-md transition-all"
+                          onClick={() => { setSelectedPassport(passport); setIsModalOpen(true); }}
                         >
-                          <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center justify-between">
                             <div className="flex-1">
                               <div className="flex items-center space-x-2 mb-1">
                                 <h3 className="font-semibold text-lg">{getProductDisplayName(passport)}</h3>
-                                {passport.metadataLoading && (
-                                  <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
-                                )}
+                                {passport.metadataLoading && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
                               </div>
-                              <div className="space-y-1">
-                                {getProductBrand(passport) && getProductCategory(passport) && (
-                                  <p className="text-sm text-gray-600">{getProductBrand(passport)} • {getProductCategory(passport)}</p>
-                                )}
-                                <p className="text-sm text-gray-600">Serial: {passport.serialNumber}</p>
-                                <p className="text-xs text-gray-500 font-mono">TX: {passport.transactionHash.substring(0, 20)}...</p>
-                                {passport.passportObjectAddr && (
-                                  <p className="text-xs text-gray-500 font-mono">Object: {passport.passportObjectAddr.substring(0, 20)}...</p>
-                                )}
-                              </div>
+                              <p className="text-sm text-gray-600">
+                                {getAttr(passport, "brand")} {getAttr(passport, "category") && `• ${getAttr(passport, "category")}`}
+                              </p>
+                              <p className="text-sm text-gray-600">Serial: {passport.serialNumber}</p>
+                              <p className="text-xs text-gray-500 font-mono">TX: {passport.transactionHash.substring(0, 20)}...</p>
                             </div>
                             <div className="text-right space-y-2">
-                              <Badge className="bg-green-100 text-green-800 border-green-200">
-                                Owned
-                              </Badge>
-                              <div>
-                                {passport.transferable ? (
-                                  <Button 
-                                    size="sm" 
+                              <Badge className="bg-green-100 text-green-800">Owned</Badge>
+                              {passport.transferable ? (
+                                <div>
+                                  <Button
+                                    size="sm"
                                     variant="outline"
-                                    onClick={(e) => {
-                                      e.stopPropagation(); // Prevent modal from opening
-                                      setSelectedPassport(passport);
-                                    }}
+                                    onClick={(e) => { e.stopPropagation(); setSelectedPassport(passport); setIsModalOpen(false); }}
                                   >
-                                    <ArrowRightLeft className="mr-1 h-3 w-3" />
-                                    Transfer
+                                    <ArrowRightLeft className="mr-1 h-3 w-3" /> Transfer
                                   </Button>
-                                ) : (
-                                  <div className="flex items-center text-xs text-gray-500">
-                                    <Lock className="mr-1 h-3 w-3" />
-                                    Non-transferable
-                                  </div>
-                                )}
-                              </div>
+                                </div>
+                              ) : (
+                                <div className="flex items-center text-xs text-gray-500 justify-end">
+                                  <Lock className="mr-1 h-3 w-3" /> Non-transferable
+                                </div>
+                              )}
                             </div>
                           </div>
-                          
-                          {/* Only show transfer form for transferable passports */}
+
+                          {/* Transfer form inline */}
                           {selectedPassport?.transactionHash === passport.transactionHash && !isModalOpen && passport.transferable && (
-                            <div className="mt-4 p-4 bg-blue-50 rounded-lg">
-                              <h4 className="font-semibold mb-2">Transfer Ownership</h4>
-                              <div className="space-y-3">
-                                <div>
-                                  <Label htmlFor="transferAddress" className="text-sm font-medium">Recipient Wallet Address</Label>
-                                  <Input
-                                    id="transferAddress"
-                                    placeholder="0x..."
-                                    value={transferAddress}
-                                    onChange={(e) => setTransferAddress(e.target.value)}
-                                    className={`mt-1 ${
-                                      transferAddress && !validateWalletAddress(transferAddress)
-                                        ? 'border-red-300 focus:border-red-500'
-                                        : ''
-                                    }`}
-                                    onClick={(e) => e.stopPropagation()}
-                                  />
-                                  {transferAddress && !validateWalletAddress(transferAddress) && (
-                                    <p className="text-sm text-red-600 mt-1">
-                                      Please enter a valid wallet address starting with 0x
-                                    </p>
-                                  )}
-                                </div>
-                                <div className="flex space-x-2">
-                                  <Button 
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleTransfer(passport);
-                                    }}
-                                    disabled={isTransferring || !transferAddress || !validateWalletAddress(transferAddress)}
-                                    className="bg-blue-600 hover:bg-blue-700"
-                                  >
-                                    {isTransferring ? "Transferring..." : "Transfer"}
-                                  </Button>
-                                  <Button 
-                                    variant="outline"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setSelectedPassport(null);
-                                      setTransferAddress("");
-                                    }}
-                                  >
-                                    Cancel
-                                  </Button>
-                                </div>
+                            <div className="mt-4 p-4 bg-blue-50 rounded-lg" onClick={e => e.stopPropagation()}>
+                              <h4 className="font-semibold mb-3">Transfer Ownership</h4>
+                              <Label className="text-sm">Recipient Wallet Address</Label>
+                              <Input
+                                placeholder="0x..."
+                                value={transferAddress}
+                                onChange={e => setTransferAddress(e.target.value)}
+                                className="mt-1 mb-3"
+                              />
+                              {transferAddress && !validateWalletAddress(transferAddress) && (
+                                <p className="text-sm text-red-600 mb-2">Please enter a valid 0x... address</p>
+                              )}
+                              <div className="flex space-x-2">
+                                <Button
+                                  onClick={() => handleTransfer(passport)}
+                                  disabled={isTransferring || !transferAddress || !validateWalletAddress(transferAddress)}
+                                  className="bg-blue-600 hover:bg-blue-700"
+                                >
+                                  {isTransferring ? "Transferring..." : "Transfer"}
+                                </Button>
+                                <Button variant="outline" onClick={() => { setSelectedPassport(null); setTransferAddress(""); }}>
+                                  Cancel
+                                </Button>
                               </div>
                             </div>
                           )}
 
-                          <div className="grid grid-cols-1 gap-4 text-sm text-gray-600 mt-3">
-                            <div>
-                              <span className="font-medium">Owner:</span>
-                              <span className="font-mono text-xs ml-2">{passport.ownerAddress.substring(0, 10)}...{passport.ownerAddress.substring(passport.ownerAddress.length - 6)}</span>
-                            </div>
-                            <div className="flex items-center">
-                              <Calendar className="mr-2 h-4 w-4" />
-                              Minted on {formatDate(passport.mintedAt)}
-                            </div>
-                            <div className="flex items-center">
-                              <span className="font-medium mr-2">Transferable:</span>
-                              <Badge className={passport.transferable ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"}>
-                                {passport.transferable ? "Yes" : "No"}
-                              </Badge>
-                            </div>
-                            {passport.metadataError && (
-                              <div className="text-xs text-red-600">
-                                ⚠️ Failed to load metadata from IPFS
-                              </div>
-                            )}
+                          <div className="mt-3 text-sm text-gray-600 flex items-center gap-4">
+                            <span className="flex items-center"><Calendar className="mr-1 h-3 w-3" /> {formatDate(passport.mintedAt)}</span>
+                            <Badge className={passport.transferable ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"} >
+                              {passport.transferable ? "Transferable" : "Non-transferable"}
+                            </Badge>
                           </div>
                         </div>
                       ))}
@@ -713,7 +575,295 @@ const UserDashboard = () => {
               </Card>
             </TabsContent>
 
-            {/* Verify Products Tab */}
+            {/* ─── MARKETPLACE TAB ───────────────────────────────────────────────── */}
+            <TabsContent value="marketplace">
+              <div className="space-y-6">
+
+                {/* ── List product section ── */}
+                <Card className="border-0 shadow-xl bg-white/80 backdrop-blur-sm">
+                  <CardHeader>
+                    <CardTitle className="text-xl flex items-center">
+                      <Store className="mr-3 h-5 w-5 text-purple-600" />
+                      List a Product for Sale
+                    </CardTitle>
+                    <CardDescription>
+                      Choose how to list your product — with or without an existing LuxPass passport
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid md:grid-cols-2 gap-6">
+
+                      {/* With passport */}
+                      <div className="border rounded-lg p-5 bg-purple-50/50 space-y-4">
+                        <div>
+                          <h3 className="font-semibold text-gray-900 mb-1">I have a LuxPass Passport</h3>
+                          <p className="text-sm text-gray-600">
+                            Using existing on-chain passport. You'll sign a transaction to mark it as STORING, then ship it to LuxPass.
+                          </p>
+                        </div>
+                        <div>
+                          <Label htmlFor="listPassportAddr">Passport Object Address</Label>
+                          <Input
+                            id="listPassportAddr"
+                            placeholder="0x..."
+                            value={listPassportAddr}
+                            onChange={e => setListPassportAddr(e.target.value)}
+                            className="mt-1"
+                          />
+                        </div>
+                        <Button
+                          onClick={handleListWithPassport}
+                          disabled={isListing || !listPassportAddr.trim()}
+                          className="w-full bg-purple-600 hover:bg-purple-700"
+                        >
+                          {isListing ? (
+                            <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Submitting...</>
+                          ) : (
+                            <><Store className="mr-2 h-4 w-4" /> List with Passport</>
+                          )}
+                        </Button>
+                      </div>
+
+                      {/* Without passport */}
+                      <div className="border rounded-lg p-5 bg-blue-50/50 space-y-4">
+                        <div>
+                          <h3 className="font-semibold text-gray-900 mb-1">I don't have a Passport yet</h3>
+                          <p className="text-sm text-gray-600">
+                            Ship your product to LuxPass. Our admin team will physically verify it and mint a new passport on your behalf.
+                          </p>
+                        </div>
+                        <div className="p-3 bg-yellow-50 rounded-md border border-yellow-200">
+                          <p className="text-xs text-yellow-800">
+                            <AlertCircle className="inline mr-1 h-3 w-3" />
+                            No on-chain transaction needed — a listing request is created immediately.
+                          </p>
+                        </div>
+                        <Button
+                          onClick={handleListWithoutPassport}
+                          disabled={isListingNoPassport}
+                          className="w-full bg-blue-600 hover:bg-blue-700"
+                        >
+                          {isListingNoPassport ? (
+                            <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Submitting...</>
+                          ) : (
+                            <><Package className="mr-2 h-4 w-4" /> List without Passport</>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* ── My listings ── */}
+                <Card className="border-0 shadow-xl bg-white/80 backdrop-blur-sm">
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <CardTitle className="text-xl flex items-center">
+                          <Truck className="mr-3 h-5 w-5 text-blue-600" />
+                          My Listings ({myListings.length})
+                        </CardTitle>
+                        <CardDescription>Track and manage your marketplace listings</CardDescription>
+                      </div>
+                      <Button variant="outline" size="sm" onClick={fetchMyListings} disabled={listingsLoading}>
+                        <RefreshCw className={`mr-2 h-4 w-4 ${listingsLoading ? "animate-spin" : ""}`} />
+                        {listingsLoading ? "Refreshing..." : "Refresh"}
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    {myListings.length === 0 ? (
+                      <div className="text-center py-12">
+                        <Store className="mx-auto h-12 w-12 text-gray-400 mb-4" />
+                        <p className="text-gray-500">No active listings. List a product above to get started.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {myListings.map(listing => {
+                          const statusInfo = LISTING_STATUS_LABELS[listing.status] ?? { label: listing.status, color: "bg-gray-100 text-gray-800" };
+                          const isReturning = listing.status === "returning";
+                          const isListed    = listing.status === "listed";
+                          const isDelistFormOpen = delistingPassportAddr === listing.passport_object_address;
+
+                          return (
+                            <div key={listing.id} className="border rounded-lg p-4 bg-white/50 space-y-3">
+                              <div className="flex items-start justify-between">
+                                <div>
+                                  <p className="font-mono text-sm text-gray-700">
+                                    {listing.passport_object_address.length > 30
+                                      ? `${listing.passport_object_address.substring(0, 20)}...`
+                                      : listing.passport_object_address}
+                                  </p>
+                                  <div className="flex items-center gap-2 mt-1">
+                                    <span className="text-xs text-gray-500">
+                                      {listing.has_passport ? "Has passport" : "No passport"}
+                                    </span>
+                                    <span className="text-xs text-gray-400">•</span>
+                                    <span className="text-xs text-gray-500">Listed {formatDate(listing.created_at)}</span>
+                                  </div>
+                                </div>
+                                <Badge className={statusInfo.color}>{statusInfo.label}</Badge>
+                              </div>
+
+                              {/* Status progress indicator */}
+                              <div className="flex items-center gap-1 text-xs text-gray-500">
+                                {["pending", "verifying", "listed", "request_return", "returning", "returned"].map((s, i) => (
+                                  <div key={s} className="flex items-center">
+                                    <div className={`h-2 w-2 rounded-full ${
+                                      listing.status === s ? "bg-blue-500" :
+                                      ["pending", "verifying", "listed", "request_return", "returning", "returned"].indexOf(listing.status) > i
+                                        ? "bg-green-400" : "bg-gray-200"
+                                    }`} />
+                                    {i < 5 && <div className="h-px w-4 bg-gray-200 mx-0.5" />}
+                                  </div>
+                                ))}
+                              </div>
+
+                              {/* Status-specific descriptions */}
+                              <div className="text-xs text-gray-500 flex items-start gap-1">
+                                {listing.status === "pending" && <><Clock className="h-3 w-3 mt-0.5 flex-shrink-0" /> Ship your product to LuxPass. Awaiting receipt.</>}
+                                {listing.status === "verifying" && <><Clock className="h-3 w-3 mt-0.5 flex-shrink-0" /> LuxPass has received your product and is verifying it.</>}
+                                {listing.status === "listed" && <><CheckCircle2 className="h-3 w-3 mt-0.5 flex-shrink-0 text-green-500" /> Your product is live on the marketplace.</>}
+                                {listing.status === "request_return" && <><Clock className="h-3 w-3 mt-0.5 flex-shrink-0" /> Delist requested. Awaiting admin approval.</>}
+                                {listing.status === "returning" && <><Truck className="h-3 w-3 mt-0.5 flex-shrink-0" /> Your product is on its way back. Confirm receipt when it arrives.</>}
+                                {listing.status === "returned" && <><CheckCircle2 className="h-3 w-3 mt-0.5 flex-shrink-0 text-green-500" /> Listing closed. Product returned successfully.</>}
+                              </div>
+
+                              {/* Action buttons */}
+                              <div className="flex gap-2 flex-wrap">
+                                {/* Delist request (only when listed) */}
+                                {isListed && !isDelistFormOpen && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => setDelistingPassportAddr(listing.passport_object_address)}
+                                  >
+                                    <RotateCcw className="mr-1 h-3 w-3" /> Request Return
+                                  </Button>
+                                )}
+
+                                {/* Confirm receipt (only when returning) */}
+                                {isReturning && (
+                                  <Button
+                                    size="sm"
+                                    className="bg-green-600 hover:bg-green-700"
+                                    disabled={isConfirmingReceipt === listing.passport_object_address}
+                                    onClick={() => handleConfirmReceipt(listing.passport_object_address)}
+                                  >
+                                    {isConfirmingReceipt === listing.passport_object_address ? (
+                                      <><Loader2 className="mr-1 h-3 w-3 animate-spin" /> Confirming...</>
+                                    ) : (
+                                      <><CheckCircle2 className="mr-1 h-3 w-3" /> Confirm Receipt</>
+                                    )}
+                                  </Button>
+                                )}
+                              </div>
+
+                              {/* Delist / shipping address form */}
+                              {isDelistFormOpen && (
+                                <div className="mt-2 p-4 bg-orange-50 rounded-lg border border-orange-200 space-y-3">
+                                  <h4 className="font-semibold text-sm flex items-center gap-2">
+                                    <MapPin className="h-4 w-4 text-orange-600" /> Shipping Address for Return
+                                  </h4>
+
+                                  <div className="grid grid-cols-1 gap-2">
+                                    <div>
+                                      <Label className="text-xs">Address Line 1 *</Label>
+                                      <Input
+                                        placeholder="123 Main St"
+                                        value={shippingAddress.addressLine1}
+                                        onChange={e => setShippingAddress(p => ({ ...p, addressLine1: e.target.value }))}
+                                        className="mt-0.5 text-sm"
+                                      />
+                                    </div>
+                                    <div>
+                                      <Label className="text-xs">Address Line 2</Label>
+                                      <Input
+                                        placeholder="Unit / Apt (optional)"
+                                        value={shippingAddress.addressLine2}
+                                        onChange={e => setShippingAddress(p => ({ ...p, addressLine2: e.target.value }))}
+                                        className="mt-0.5 text-sm"
+                                      />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <div>
+                                        <Label className="text-xs">City *</Label>
+                                        <Input
+                                          placeholder="Singapore"
+                                          value={shippingAddress.city}
+                                          onChange={e => setShippingAddress(p => ({ ...p, city: e.target.value }))}
+                                          className="mt-0.5 text-sm"
+                                        />
+                                      </div>
+                                      <div>
+                                        <Label className="text-xs">State / Region *</Label>
+                                        <Input
+                                          placeholder="SG"
+                                          value={shippingAddress.state}
+                                          onChange={e => setShippingAddress(p => ({ ...p, state: e.target.value }))}
+                                          className="mt-0.5 text-sm"
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <div>
+                                        <Label className="text-xs">Postal Code *</Label>
+                                        <Input
+                                          placeholder="123456"
+                                          value={shippingAddress.postalCode}
+                                          onChange={e => setShippingAddress(p => ({ ...p, postalCode: e.target.value }))}
+                                          className="mt-0.5 text-sm"
+                                        />
+                                      </div>
+                                      <div>
+                                        <Label className="text-xs">Country *</Label>
+                                        <Input
+                                          placeholder="Singapore"
+                                          value={shippingAddress.country}
+                                          onChange={e => setShippingAddress(p => ({ ...p, country: e.target.value }))}
+                                          className="mt-0.5 text-sm"
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex gap-2">
+                                    <Button
+                                      size="sm"
+                                      className="bg-orange-600 hover:bg-orange-700"
+                                      disabled={isDelisting}
+                                      onClick={() => handleDelistRequest(listing.passport_object_address)}
+                                    >
+                                      {isDelisting ? (
+                                        <><Loader2 className="mr-1 h-3 w-3 animate-spin" /> Submitting...</>
+                                      ) : (
+                                        "Submit Return Request"
+                                      )}
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => {
+                                        setDelistingPassportAddr(null);
+                                        setShippingAddress({ addressLine1: "", addressLine2: "", city: "", state: "", postalCode: "", country: "" });
+                                      }}
+                                    >
+                                      Cancel
+                                    </Button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+
+            {/* ─── VERIFY TAB ─────────────────────────────────────────────────────── */}
             <TabsContent value="verify">
               <Card className="border-0 shadow-xl bg-white/80 backdrop-blur-sm">
                 <CardHeader>
@@ -721,26 +871,20 @@ const UserDashboard = () => {
                     <Eye className="mr-3 h-6 w-6 text-green-600" />
                     Verify Product Authenticity
                   </CardTitle>
-                  <CardDescription>
-                    Check the authenticity of any product passport
-                  </CardDescription>
+                  <CardDescription>Check the authenticity of any product passport</CardDescription>
                 </CardHeader>
                 <CardContent className="text-center py-8">
                   <Search className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-                  <p className="text-gray-600 mb-4">
-                    Use our verification tool to check product authenticity
-                  </p>
+                  <p className="text-gray-600 mb-4">Use our verification tool to check product authenticity</p>
                   <Link to="/verify">
-                    <Button className="bg-green-600 hover:bg-green-700">
-                      Go to Verification Tool
-                    </Button>
+                    <Button className="bg-green-600 hover:bg-green-700">Go to Verification Tool</Button>
                   </Link>
                 </CardContent>
               </Card>
             </TabsContent>
           </Tabs>
 
-          {/* Product Details Modal */}
+          {/* ─── PASSPORT DETAILS MODAL ───────────────────────────────────────────── */}
           <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
             <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
@@ -748,14 +892,11 @@ const UserDashboard = () => {
                   <Package className="mr-3 h-6 w-6 text-blue-600" />
                   Product Passport Details
                 </DialogTitle>
-                <DialogDescription>
-                  Complete information for this owned product passport
-                </DialogDescription>
+                <DialogDescription>Complete information for this owned product passport</DialogDescription>
               </DialogHeader>
-              
+
               {selectedPassport && isModalOpen && (
                 <div className="space-y-6">
-                  {/* Product Image and Basic Info */}
                   <div className="grid md:grid-cols-2 gap-6">
                     <div>
                       {selectedPassport.metadata?.image ? (
@@ -765,10 +906,7 @@ const UserDashboard = () => {
                             src={convertIPFSToHTTP(selectedPassport.metadata.image)}
                             alt={selectedPassport.metadata.name || "Product"}
                             className="w-full h-64 object-cover rounded-lg border"
-                            onError={(e) => {
-                              console.error("Failed to load product image");
-                              e.currentTarget.style.display = 'none';
-                            }}
+                            onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
                           />
                         </div>
                       ) : (
@@ -776,34 +914,25 @@ const UserDashboard = () => {
                           <div className="text-center text-gray-500">
                             <ImageIcon className="mx-auto h-12 w-12 mb-2" />
                             <p>No image available</p>
-                            {selectedPassport.metadataError && (
-                              <p className="text-xs text-red-500 mt-1">Failed to load metadata</p>
-                            )}
                           </div>
                         </div>
                       )}
                     </div>
-                    
+
                     <div className="space-y-4">
                       <div>
                         <Label className="text-base font-semibold">Product Name</Label>
                         <p className="text-lg">{selectedPassport.metadata?.name || `Product ${selectedPassport.serialNumber}`}</p>
                       </div>
-                      
                       <div>
                         <Label className="text-base font-semibold">Description</Label>
                         <p className="text-gray-700">{selectedPassport.metadata?.description || "No description available"}</p>
                       </div>
-                      
                       <div>
                         <Label className="text-sm font-medium">Serial Number</Label>
                         <div className="flex items-center space-x-2">
                           <p className="font-mono text-sm">{selectedPassport.serialNumber}</p>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => copyToClipboard(selectedPassport.serialNumber, "Serial number")}
-                          >
+                          <Button size="sm" variant="ghost" onClick={() => copyToClipboard(selectedPassport.serialNumber, "Serial number")}>
                             <Copy className="h-3 w-3" />
                           </Button>
                         </div>
@@ -813,13 +942,12 @@ const UserDashboard = () => {
 
                   <Separator />
 
-                  {/* Product Attributes */}
                   {selectedPassport.metadata?.attributes && selectedPassport.metadata.attributes.length > 0 && (
                     <div>
                       <Label className="text-base font-semibold mb-3 block">Product Attributes</Label>
                       <div className="grid md:grid-cols-2 gap-4">
-                        {selectedPassport.metadata.attributes.map((attr, index) => (
-                          <div key={index} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                        {selectedPassport.metadata.attributes.map((attr, i) => (
+                          <div key={i} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
                             <span className="font-medium text-gray-700">{attr.trait_type}:</span>
                             <span className="text-gray-900">{attr.value}</span>
                           </div>
@@ -830,109 +958,42 @@ const UserDashboard = () => {
 
                   <Separator />
 
-                  {/* Blockchain Information */}
                   <div>
                     <Label className="text-base font-semibold mb-3 block">Blockchain Information</Label>
                     <div className="space-y-3">
-                      <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                        <span className="font-medium text-gray-700">Transaction Hash:</span>
-                        <div className="flex items-center space-x-2">
-                          <span className="font-mono text-sm">{selectedPassport.transactionHash.substring(0, 20)}...</span>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => copyToClipboard(selectedPassport.transactionHash, "Transaction hash")}
-                          >
-                            <Copy className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      </div>
-                      
-                      {selectedPassport.passportObjectAddr && (
-                        <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                          <span className="font-medium text-gray-700">Passport Object Address:</span>
+                      {[
+                        { label: "Transaction Hash", value: selectedPassport.transactionHash },
+                        ...(selectedPassport.passportObjectAddr ? [{ label: "Passport Object Address", value: selectedPassport.passportObjectAddr }] : []),
+                        { label: "Owner Address", value: selectedPassport.ownerAddress },
+                        { label: "Issuer Address", value: selectedPassport.issuerAddress },
+                        { label: "Registry Address", value: selectedPassport.registryAddress },
+                      ].map(({ label, value }) => (
+                        <div key={label} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                          <span className="font-medium text-gray-700">{label}:</span>
                           <div className="flex items-center space-x-2">
-                            <span className="font-mono text-sm">{selectedPassport.passportObjectAddr.substring(0, 20)}...</span>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => copyToClipboard(selectedPassport.passportObjectAddr, "Passport object address")}
-                            >
+                            <span className="font-mono text-sm">{value.substring(0, 20)}...</span>
+                            <Button size="sm" variant="ghost" onClick={() => copyToClipboard(value, label)}>
                               <Copy className="h-3 w-3" />
                             </Button>
                           </div>
                         </div>
-                      )}
-                      
-                      <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                        <span className="font-medium text-gray-700">Owner Address:</span>
-                        <div className="flex items-center space-x-2">
-                          <span className="font-mono text-sm">{selectedPassport.ownerAddress.substring(0, 20)}...</span>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => copyToClipboard(selectedPassport.ownerAddress, "Owner address")}
-                          >
-                            <Copy className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      </div>
-                      
-                      <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                        <span className="font-medium text-gray-700">Issuer Address:</span>
-                        <div className="flex items-center space-x-2">
-                          <span className="font-mono text-sm">{selectedPassport.issuerAddress.substring(0, 20)}...</span>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => copyToClipboard(selectedPassport.issuerAddress, "Issuer address")}
-                          >
-                            <Copy className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      </div>
-                      
-                      <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                        <span className="font-medium text-gray-700">Registry Address:</span>
-                        <div className="flex items-center space-x-2">
-                          <span className="font-mono text-sm">{selectedPassport.registryAddress.substring(0, 20)}...</span>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => copyToClipboard(selectedPassport.registryAddress, "Registry address")}
-                          >
-                            <Copy className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      </div>
-                      
+                      ))}
                       <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
                         <span className="font-medium text-gray-700">Metadata URI:</span>
                         <div className="flex items-center space-x-2">
                           <span className="font-mono text-sm">{selectedPassport.metadataUri.substring(0, 20)}...</span>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => copyToClipboard(selectedPassport.metadataUri, "Metadata URI")}
-                          >
+                          <Button size="sm" variant="ghost" onClick={() => copyToClipboard(selectedPassport.metadataUri, "Metadata URI")}>
                             <Copy className="h-3 w-3" />
                           </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => window.open(convertIPFSToHTTP(selectedPassport.metadataUri), '_blank')}
-                            title="View metadata on IPFS"
-                          >
+                          <Button size="sm" variant="ghost" onClick={() => window.open(convertIPFSToHTTP(selectedPassport.metadataUri), "_blank")}>
                             <ExternalLink className="h-3 w-3" />
                           </Button>
                         </div>
                       </div>
-                      
                       <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
                         <span className="font-medium text-gray-700">Minted Date:</span>
                         <span>{formatDate(selectedPassport.mintedAt)}</span>
                       </div>
-
                       <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
                         <span className="font-medium text-gray-700">Transferable:</span>
                         <Badge className={selectedPassport.transferable ? "bg-blue-100 text-blue-800" : "bg-gray-100 text-gray-800"}>

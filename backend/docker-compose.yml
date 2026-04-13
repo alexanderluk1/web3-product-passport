@@ -28,7 +28,7 @@ services:
     build: .
     container_name: luxpass_app
     ports:
-      - "3000:3000"
+      - "3001:3001"
     environment:
       - ADMIN_PRIVATE_KEY=${ADMIN_PRIVATE_KEY}
     env_file:

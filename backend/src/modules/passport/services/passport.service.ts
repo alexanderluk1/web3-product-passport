@@ -77,6 +77,7 @@ import {
   STATUS_LISTING,
   STATUS_RETURNING,
   PASSPORT_MINTLIST_FN,
+  PASSPORT_MINTLIST_EV,
 } from "../../../chains/luxpass/constants";
 import { initRegistry as writeInitRegistry } from "../../../chains/luxpass/writers/initRegistry";
 import {
@@ -370,6 +371,16 @@ function isMarketPlaceStatus(status: number): boolean{
 
 function isCacheFresh(syncedAt: number): boolean {
   return Date.now() - syncedAt < PRODUCT_CACHE_TTL_MS;
+}
+
+interface AptosEvent {
+  guid: {
+    creation_number: string;
+    account_address: string;
+  };
+  sequence_number: string;
+  type: string;
+  data: Record<string, any>; 
 }
 
 const listingStatusMap: Record<number, ListingRequestStatus> = {
@@ -1426,8 +1437,6 @@ export const passportListingService = {
       return { success: false, error: "Invalid transaction hash." };
     }
 
-    validateWalletAddress(body.passportObjectAddress, "passport object address");
-
     const response = await fetch(`${FULLNODE_URL}/transactions/by_hash/${body.txHash}`);
 
     if (!response.ok) {
@@ -1438,6 +1447,7 @@ export const passportListingService = {
       type: string;
       success: boolean;
       payload?: { function?: string };
+      events?: AptosEvent[];
     };
 
     if (!tx) {
@@ -1458,18 +1468,27 @@ export const passportListingService = {
     }
 
     try {
-      const normalizedPassportAddr = normalizeAddress(body.passportObjectAddress);
+      const passportEvent = tx.events?.find(e => e.type.includes(PASSPORT_MINTLIST_EV));
+
+      if (passportEvent) {
+        const { passport, old_address } = passportEvent.data;
+        const normalizedPassportAddr = normalizeAddress(passport);
+        await updateListingRequestPassportAddress(
+          old_address,
+          normalizedPassportAddr,
+        )
+      } else{
+        return {success:false,error:"Failed to retrieve mint list event"};
+      }
+
       // Will update status, has_passport and the real passport address replacing the temp one at the same time
       // Search will be done on the tempPassport
-      await updateListingRequestPassportAddress(
-        body.tempPassportObjectAddress,
-        normalizedPassportAddr,
-      )
+      
     } catch (err:any){
       return { success: false, error: "Failed to update database after minting:"+err };
     }
-
-    return { success: true, message: "Minting of listed passport recorded successfully." };
+    
+    return {success:true, message:"Successfully updated for mint list"};
   },
 
   // request by owner to delist the passport from marketplace, would require admin review and action to delist the passport on chain

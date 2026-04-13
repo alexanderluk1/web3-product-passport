@@ -281,7 +281,7 @@ export type UpdateNoPassportListingRequestBody = {
   tempObjectAddress: string;
   status?: string;
   newObjectAddress?: string;
-}
+};
 
 export type UpdateNoPassportListingResponse =   | {
   success: true;
@@ -343,7 +343,7 @@ export type RecordConfirmReceiptResponse =
   | {
       success: false;
       error: string;
-    }
+    };
 
 export type PrepareMintListPassportRequestBody = {
   tempObjectAddress: string; // temporary object address used for listing without passport (Used to get the listing)
@@ -355,12 +355,12 @@ export type PrepareMintListPassportRequestBody = {
   materials: string | string[];
   countryOfOrigin: string;
   description: string;
-}
+};
 
 export type PreparedMintListPayload = {
   function: string;
   functionArguments: Array<string | boolean | number[]>;
-}
+};
 
 export type PrepareMintListPassportResponse = 
   | {
@@ -375,12 +375,10 @@ export type PrepareMintListPassportResponse =
   | {
       success: false;
       error: string;
-  }
+  };
 
 export type RecordMintListRequestBody = {
   txHash: string;
-  tempPassportObjectAddress: string;
-  passportObjectAddress: string;
   ownerAddress: string;
 };
 
@@ -400,15 +398,15 @@ export type PrepareMarketplaceSetStatusRequestBody = {
 
 export type getListingByPassportAddressBody = {
   passportObjectAddress: string;
-}
+};
 
 export type getListingsByStatus = {
     status: ListingRequestStatus
-}
+};
 
 export type getDelistingsByStatus = {
   status: DelistRequestStatus
-}
+};
 
 export type listingRequestReturn = {
   | {
@@ -419,7 +417,7 @@ export type listingRequestReturn = {
     success: false;
     error: string;
   }
-}
+};
 
 export type listingRequestReturnList = {
   | {
@@ -430,7 +428,7 @@ export type listingRequestReturnList = {
     success: false;
     error: string;
   }
-}
+};
 
 export type deListRequestReturn = {
   | {
@@ -441,7 +439,7 @@ export type deListRequestReturn = {
     success: false;
     error: string;
   }
-}
+};
 
 export type deListRequestReturnList = {
   | {
@@ -452,4 +450,52 @@ export type deListRequestReturnList = {
     success: false;
     error: string;
   }
-}
+};
+
+export type PassportHistoryEntry =
+  | {
+      kind: "minted";
+      passportObjectAddr: string;
+      transactionVersion: string;
+      transactionHash: string;
+      issuerAddress: string;
+      ownerAddress: string;
+      timestamp?: number;
+    }
+  | {
+      kind: "mint_listed";
+      passportObjectAddr: string;
+      transactionVersion: string;
+      transactionHash: string;
+      issuerAddress: string;
+      ownerAddress: string;
+      oldAddress: string;
+      timestamp?: number;
+    }
+  | {
+      kind: "transferred";
+      passportObjectAddr: string;
+      transactionVersion: string;
+      transactionHash: string;
+      from: string;
+      to: string;
+      timestamp?: number;
+    }
+  | {
+      kind: "status_changed";
+      passportObjectAddr: string;
+      transactionVersion: string;
+      transactionHash: string;
+      oldStatus: PassportStatusValue;
+      newStatus: PassportStatusValue;
+      timestamp?: number;
+    }
+  | {
+      kind: "metadata_updated";
+      passportObjectAddr: string;
+      transactionVersion: string;
+      transactionHash: string;
+      updaterAddress: string;
+      newMetadataUri: string;
+      timestamp?: number;
+    };
