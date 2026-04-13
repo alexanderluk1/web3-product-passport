@@ -165,6 +165,40 @@ After publishing, update `backend/.env` addresses to match deployed modules/stat
   - Verify Move modules are published to the same network as `APTOS_NETWORK`.
   - Verify `MODULE_ADDRESS`, `REGISTRY_ADDRESS`, `LPT_MODULE_ADDRESS`, and `LPT_STATE_ADDRESS`.
 
+### Devnet wiped / reset recovery (republish + re-init)
+
+If devnet state is wiped, you must republish modules first, then initialize registry/token state again.
+
+From repository root:
+
+```bash
+cd web3/product-passport
+
+# optional: fund deployer/admin account first
+aptos account fund-with-faucet --account <YOUR_ADMIN_ADDRESS> --profile admin
+
+# 1) publish product-passport package (contains issuer_registry + passport)
+aptos move publish --profile admin --assume-yes
+
+# 2) publish luxpass-token package using same admin profile
+aptos move publish --profile admin --assume-yes --package-dir "../luxpass-token"
+```
+
+Then reinitialize on-chain resources:
+
+```bash
+cd ../../backend
+npm run start:safe
+```
+
+`start:safe` runs preflight and initializes:
+- `issuer_registry::init`
+- `passport::init_index`
+- `passport::init_events`
+- LuxPass token state init
+
+If you only run `npm run dev`, you can also initialize via API (`POST /admin/registry/init`) after logging in as an admin wallet.
+
 ## Scripts Reference
 
 ### Backend (`backend/package.json`)
