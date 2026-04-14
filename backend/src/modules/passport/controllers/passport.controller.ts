@@ -458,10 +458,28 @@ export async function getOwnedPassportsHandler(req: Request, res: Response) {
       });
     }
 
+    console.log("[passport:owned] request", {
+      walletAddress: req.user.walletAddress,
+      role: req.user.role,
+    });
+
     const result = await passportService.getOwnedPassports(req.user.walletAddress);
+
+    console.log("[passport:owned] response", {
+      walletAddress: req.user.walletAddress,
+      source: result.source,
+      productCount: result.products.length,
+      syncedAt: result.syncedAt,
+    });
 
     return res.status(200).json(result);
   } catch (error) {
+    console.error("[passport:owned] failed", {
+      walletAddress: req.user?.walletAddress,
+      role: req.user?.role,
+      error,
+    });
+
     return res.status(500).json({
       success: false,
       error:

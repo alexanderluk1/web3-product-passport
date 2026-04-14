@@ -46,6 +46,13 @@ type AptPurchaseCompleteResponse = {
   error?: string;
 };
 
+type AptPurchaseRateResponse = {
+  success: boolean;
+  priceOctasPerLpt?: string;
+  treasuryAddress?: string;
+  error?: string;
+};
+
 type TokenStatus = {
   initialised: boolean;
   adminAddress: string | null;
@@ -131,7 +138,7 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
   const [transferAmount, setTransferAmount] = useState("1");
   const [aptPurchaseAmount, setAptPurchaseAmount] = useState("10");
   const [aptPurchaseQuote, setAptPurchaseQuote] = useState<AptPurchasePrepareResponse | null>(null);
-  const [isAptQuoteLoading, setIsAptQuoteLoading] = useState(false);
+  const [aptPurchaseRateOctas, setAptPurchaseRateOctas] = useState<string | null>(null);
   const [referrerAddress, setReferrerAddress] = useState("");
   const [initSignupReward, setInitSignupReward] = useState("10");
   const [initReferralReward, setInitReferralReward] = useState("7");
@@ -282,8 +289,6 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
 
     let shouldIgnore = false;
     const timeoutId = window.setTimeout(async () => {
-      setIsAptQuoteLoading(true);
-
       try {
         const prepared = await fetchJson<AptPurchasePrepareResponse>(
           `${API_BASE_URL}/api/tokens/purchase-apt/prepare`,
@@ -299,15 +304,14 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
 
         if (!shouldIgnore && prepared.success) {
           setAptPurchaseQuote(prepared);
+          if (prepared.priceOctasPerLpt) {
+            setAptPurchaseRateOctas(String(prepared.priceOctasPerLpt));
+          }
         }
       } catch (error) {
         if (!shouldIgnore) {
           console.error("APT purchase quote failed:", error);
           setAptPurchaseQuote(null);
-        }
-      } finally {
-        if (!shouldIgnore) {
-          setIsAptQuoteLoading(false);
         }
       }
     }, 350);
@@ -317,6 +321,38 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
       window.clearTimeout(timeoutId);
     };
   }, [accessToken, aptPurchaseAmount, authHeaders, showUserActions]);
+
+  useEffect(() => {
+    if (!showUserActions) {
+      setAptPurchaseRateOctas(null);
+      return;
+    }
+
+    let shouldIgnore = false;
+
+    const fetchAptPurchaseRate = async () => {
+      try {
+        const rate = await fetchJson<AptPurchaseRateResponse>(
+          `${API_BASE_URL}/api/tokens/purchase-apt/rate`
+        );
+
+        if (!shouldIgnore && rate.success && rate.priceOctasPerLpt) {
+          setAptPurchaseRateOctas(String(rate.priceOctasPerLpt));
+        }
+      } catch (error) {
+        if (!shouldIgnore) {
+          console.error("APT purchase rate failed:", error);
+          setAptPurchaseRateOctas(null);
+        }
+      }
+    };
+
+    fetchAptPurchaseRate();
+
+    return () => {
+      shouldIgnore = true;
+    };
+  }, [showUserActions]);
 
   const prepareTokenAction = async (
     endpoint: string,
@@ -736,9 +772,16 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
               <div className="rounded-lg border bg-white/70 p-4">
                 <div className="mb-4 flex items-center">
                   <CreditCard className="mr-2 h-5 w-5 text-emerald-600" />
-                  <div>
-                    <h3 className="font-semibold">Buy LPT with APT</h3>
-                    <p className="text-sm text-gray-600">Pay APT and receive LPT after payment verification.</p>
+                  <div className="flex flex-1 flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h3 className="font-semibold">Buy LPT with APT</h3>
+                      <p className="text-sm text-gray-600">
+                        Pay APT and receive LPT after payment verification.
+                      </p>
+                    </div>
+                    <Badge variant="outline">
+                      Rate: {formatAptFromOctas(aptPurchaseQuote?.priceOctasPerLpt ?? aptPurchaseRateOctas ?? undefined)} APT / LPT
+                    </Badge>
                   </div>
                 </div>
                 <div className="space-y-3">
@@ -753,15 +796,6 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
                         setAptPurchaseQuote(null);
                       }}
                     />
-                  </div>
-                  <div className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-900">
-                    Rate: {formatAptFromOctas(aptPurchaseQuote?.priceOctasPerLpt)} APT / LPT
-                    <span className="block">
-                      APT due: {isAptQuoteLoading ? "Calculating..." : `${formatAptFromOctas(aptPurchaseQuote?.aptAmountOctas)} APT`}
-                    </span>
-                    <span className="block text-xs text-emerald-700">
-                      The payment uses the latest backend quote before opening your wallet.
-                    </span>
                   </div>
                   <Button
                     className="w-full bg-emerald-600 hover:bg-emerald-700"

@@ -794,13 +794,31 @@ export const passportService = {
   async getOwnedPassports(ownerWalletAddress: string): Promise<GetOwnedPassportsResponse> {
     validateWalletAddress(ownerWalletAddress, "owner wallet address");
     const normalizedOwnerAddress = normalizeAddress(ownerWalletAddress);
-    const products = await getOwnedPassportsFromChain(normalizedOwnerAddress);
 
-    return {
-      source: "chain",
-      syncedAt: Date.now(),
-      products,
-    };
+    console.log("[passport.service:getOwnedPassports] fetching from chain", {
+      ownerWalletAddress: normalizedOwnerAddress,
+    });
+
+    try {
+      const products = await getOwnedPassportsFromChain(normalizedOwnerAddress);
+
+      console.log("[passport.service:getOwnedPassports] chain fetch success", {
+        ownerWalletAddress: normalizedOwnerAddress,
+        productCount: products.length,
+      });
+
+      return {
+        source: "chain",
+        syncedAt: Date.now(),
+        products,
+      };
+    } catch (error) {
+      console.error("[passport.service:getOwnedPassports] chain fetch failed", {
+        ownerWalletAddress: normalizedOwnerAddress,
+        error,
+      });
+      throw error;
+    }
   },
 
   async prepareTransferPassport(params: {
