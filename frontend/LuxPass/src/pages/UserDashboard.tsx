@@ -13,6 +13,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useWallet } from "@aptos-labs/wallet-adapter-react";
 import { showSuccess, showError } from "@/utils/toast";
 import { LptPanel } from "@/components/LptPanel";
+import { PassportServicePayment } from "@/components/PassportServicePayment";
 
 // Pinata IPFS Gateway Configuration
 const PINATA_GATEWAY_URL = "https://amaranth-passive-chicken-549.mypinata.cloud";
@@ -688,6 +689,10 @@ const UserDashboard = () => {
                               </div>
                             </div>
                           )}
+
+                          <PassportServicePayment
+                            passportLabel={passport.metadata?.name || passport.serialNumber}
+                          />
 
                           <div className="grid grid-cols-1 gap-4 text-sm text-gray-600 mt-3">
                             <div>

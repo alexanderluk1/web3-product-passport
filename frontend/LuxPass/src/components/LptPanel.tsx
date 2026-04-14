@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useWallet } from "@aptos-labs/wallet-adapter-react";
-import { ArrowRightLeft, Flame, Gift, Loader2, RefreshCw, Send, Wallet } from "lucide-react";
+import { ArrowRightLeft, Gift, Loader2, RefreshCw, Send, Wallet } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,7 +11,6 @@ import { useAuth } from "@/hooks/useAuth";
 import { showError, showSuccess } from "@/utils/toast";
 
 const API_BASE_URL = "http://localhost:3001";
-const DEFAULT_SERVICE_AMOUNT = "2";
 const SIGNUP_CLAIM_STORAGE_PREFIX = "luxpass:lpt:signup-claimed:";
 
 type PreparedPayload = {
@@ -89,8 +88,6 @@ export function LptPanel() {
   const [activeAction, setActiveAction] = useState<string | null>(null);
   const [recipientAddress, setRecipientAddress] = useState("");
   const [transferAmount, setTransferAmount] = useState("1");
-  const [serviceAmount, setServiceAmount] = useState(DEFAULT_SERVICE_AMOUNT);
-  const [serviceLabel, setServiceLabel] = useState("Authenticity service");
   const [lastTxHash, setLastTxHash] = useState<string | null>(null);
   const [signupRewardClaimed, setSignupRewardClaimed] = useState(false);
 
@@ -308,23 +305,6 @@ export function LptPanel() {
     );
   };
 
-  const burnForService = () => {
-    if (!isPositiveInteger(serviceAmount)) {
-      showError("Enter a positive whole-number service amount.");
-      return;
-    }
-
-    runTokenAction(
-      "burn-service",
-      () =>
-        prepareTokenAction("/api/tokens/burn-for-service/prepare", {
-          amount: serviceAmount,
-        }),
-      (txHash) =>
-        `${serviceLabel} paid with ${serviceAmount} LPT${txHash ? `: ${txHash.slice(0, 10)}...` : "."}`
-    );
-  };
-
   const actionButtonLabel = (actionName: string, idleLabel: string) => {
     return activeAction === actionName ? (
       <>
@@ -348,7 +328,7 @@ export function LptPanel() {
               LuxPass Token Flow
             </CardTitle>
             <CardDescription>
-              Claim LPT, send it to another wallet, and spend it on passport services.
+              Claim LPT and send it to another wallet. Passport service payments live with each passport.
             </CardDescription>
           </div>
           <Button
@@ -391,7 +371,7 @@ export function LptPanel() {
 
         <Separator />
 
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div className="grid gap-4 lg:grid-cols-2">
           <div className="rounded-lg border bg-white/70 p-4">
             <div className="mb-4 flex items-center">
               <Gift className="mr-2 h-5 w-5 text-emerald-600" />
@@ -449,47 +429,6 @@ export function LptPanel() {
             </div>
           </div>
 
-          <div className="rounded-lg border bg-white/70 p-4">
-            <div className="mb-4 flex items-center">
-              <Flame className="mr-2 h-5 w-5 text-orange-600" />
-              <div>
-                <h3 className="font-semibold">Passport Service</h3>
-                <p className="text-sm text-gray-600">Burn LPT to pay for a passport service.</p>
-              </div>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <Label htmlFor="lptService">Service</Label>
-                <select
-                  id="lptService"
-                  className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  value={serviceLabel}
-                  onChange={(event) => setServiceLabel(event.target.value)}
-                >
-                  <option>Authenticity service</option>
-                  <option>Repair request</option>
-                  <option>Premium provenance report</option>
-                </select>
-              </div>
-              <div>
-                <Label htmlFor="lptServiceAmount">Cost</Label>
-                <Input
-                  id="lptServiceAmount"
-                  inputMode="numeric"
-                  value={serviceAmount}
-                  onChange={(event) => setServiceAmount(event.target.value)}
-                />
-              </div>
-              <Button
-                className="w-full bg-orange-600 hover:bg-orange-700"
-                onClick={burnForService}
-                disabled={isBusy || !accessToken || !connected}
-              >
-                <Flame className="mr-2 h-4 w-4" />
-                {actionButtonLabel("burn-service", "Pay With LPT")}
-              </Button>
-            </div>
-          </div>
         </div>
 
         {lastTxHash && (
