@@ -149,20 +149,18 @@ module luxpass::passport {
     // Entry functions
     // ----------------------
 
-    // Mint a new passport Object owned by `owner`.
-    // Also writes mapping: serial_key -> passport_object_addr into PassportIndex.
-    public entry fun mint(
-        issuer: &signer,
+    // Shared core: create passport Object owned by `owner`, enforce transfer rules,
+    // record in PassportIndex, and return the passport object address.
+    fun mint_internal(
         registry_addr: address,
+        issuer_addr: address,
         owner: address,
         serial_plain: vector<u8>,
         metadata_uri: String,
         metadata_bytes: vector<u8>,
+        status: u8,
         transferable: bool,
-    ) acquires PassportEvents, PassportIndex {
-        let issuer_addr = signer::address_of(issuer);
-        assert!(issuer_registry::is_issuer(registry_addr, issuer_addr), E_NOT_ISSUER);
-
+    ): address acquires PassportIndex {
         assert!(exists<PassportIndex>(registry_addr), E_INDEX_NOT_INITIALIZED);
         assert!(exists<PassportEvents>(registry_addr), E_EVENTS_NOT_INITIALIZED);
 
@@ -196,7 +194,7 @@ module luxpass::passport {
                 serial_hash,
                 metadata_uri,
                 metadata_hash,
-                status: STATUS_ACTIVE,
+                status,
                 transferable,
                 created_at_secs: timestamp::now_seconds(),
             },
@@ -208,6 +206,34 @@ module luxpass::passport {
 
         // Write mapping serial_key -> passport_addr
         table::add(&mut idx.serial_to_passport, serial_key, passport_addr);
+
+        passport_addr
+    }
+
+    // Mint a new passport Object owned by `owner`.
+    // Also writes mapping: serial_key -> passport_object_addr into PassportIndex.
+    public entry fun mint(
+        issuer: &signer,
+        registry_addr: address,
+        owner: address,
+        serial_plain: vector<u8>,
+        metadata_uri: String,
+        metadata_bytes: vector<u8>,
+        transferable: bool,
+    ) acquires PassportEvents, PassportIndex {
+        let issuer_addr = signer::address_of(issuer);
+        assert!(issuer_registry::is_issuer(registry_addr, issuer_addr), E_NOT_ISSUER);
+
+        let passport_addr = mint_internal(
+            registry_addr,
+            issuer_addr,
+            owner,
+            serial_plain,
+            metadata_uri,
+            metadata_bytes,
+            STATUS_ACTIVE,
+            transferable,
+        );
 
         // Emit mint list event
         let ev = borrow_global_mut<PassportEvents>(registry_addr);
@@ -229,47 +255,16 @@ module luxpass::passport {
         let is_admin = admin_addr == issuer_registry::admin_of(registry_addr);
         assert!(is_admin, E_NOT_AUTHORIZED);
 
-        assert!(exists<PassportIndex>(registry_addr), E_INDEX_NOT_INITIALIZED);
-        assert!(exists<PassportEvents>(registry_addr), E_EVENTS_NOT_INITIALIZED);
-
-        let (serial_hash, serial_key) = serial_key_from_plain(serial_plain);
-        let metadata_hash = hash::sha3_256(metadata_bytes);
-
-        // Enforce uniqueness: one passport per product id
-        let idx = borrow_global_mut<PassportIndex>(registry_addr);
-        assert!(!table::contains(&idx.serial_to_passport, serial_key), E_DUPLICATE_PRODUCT_ID);
-
-        // Create object owned by `owner`
-        let constructor_ref = object::create_object(owner);
-
-        // Enforce transfer rules
-        let transfer_ref = object::generate_transfer_ref(&constructor_ref);
-        object::disable_ungated_transfer(&transfer_ref);
-
-        let obj_signer = object::generate_signer(&constructor_ref);
-        move_to(&obj_signer, PassportControl { transfer_ref });
-
-        // Store Passport data under the object
-        let obj_signer2 = object::generate_signer(&constructor_ref);
-        move_to(
-            &obj_signer2,
-            Passport {
-                issuer: admin_addr,
-                serial_hash,
-                metadata_uri,
-                metadata_hash,
-                status: STATUS_LISTING,
-                transferable: true,
-                created_at_secs: timestamp::now_seconds(),
-            },
+        let passport_addr = mint_internal(
+            registry_addr,
+            admin_addr,
+            owner,
+            serial_plain,
+            metadata_uri,
+            metadata_bytes,
+            STATUS_LISTING,
+            true,
         );
-
-        // Get passport object address
-        let obj: Object<ObjectCore> = object::object_from_constructor_ref<ObjectCore>(&constructor_ref);
-        let passport_addr = object::object_address(&obj);
-
-        // Write mapping serial_key -> passport_addr
-        table::add(&mut idx.serial_to_passport, serial_key, passport_addr);
 
         // Emit mint event
         let ev = borrow_global_mut<PassportEvents>(registry_addr);
