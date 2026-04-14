@@ -1,8 +1,10 @@
 import type { Request, Response } from "express";
 import { lptService } from "../services/lpt.service";
 import type {
+  CompleteAptPurchaseBody,
   PrepareAllocateBody,
   PrepareAmountBody,
+  PrepareAptPurchaseBody,
   PrepareClaimReferralBody,
   PrepareCreditFiatBody,
   PrepareMintBody,
@@ -96,6 +98,49 @@ export async function prepareCreditFiatHandler(req: Request, res: Response) {
     return res.status(200).json({ success: true, payload });
   } catch (error) {
     return handleError(res, error, "Failed to prepare credit fiat payload.");
+  }
+}
+
+export async function prepareAptPurchaseHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized.",
+      });
+    }
+
+    const body = req.body as PrepareAptPurchaseBody;
+    const result = await lptService.prepareAptPurchase(
+      req.user.walletAddress,
+      body.lptAmount
+    );
+
+    return res.status(200).json({ success: true, ...result });
+  } catch (error) {
+    return handleError(res, error, "Failed to prepare APT purchase payload.");
+  }
+}
+
+export async function completeAptPurchaseHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized.",
+      });
+    }
+
+    const body = req.body as CompleteAptPurchaseBody;
+    const result = await lptService.completeAptPurchase(
+      req.user.walletAddress,
+      body.lptAmount,
+      body.paymentTransactionHash
+    );
+
+    return res.status(200).json({ success: true, ...result });
+  } catch (error) {
+    return handleError(res, error, "Failed to complete APT purchase.");
   }
 }
 

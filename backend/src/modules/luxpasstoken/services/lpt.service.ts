@@ -12,13 +12,20 @@ import {
   viewSignupClaimed,
   viewSupply,
 } from "../../../chains/luxpasstoken/readers";
-import { init as writeInit } from "../../../chains/luxpasstoken/writers";
+import {
+  creditFiat as writeCreditFiat,
+  init as writeInit,
+} from "../../../chains/luxpasstoken/writers";
 import type { PreparedTransactionPayload } from "../types/lpt.types";
 
 const aptos = makeAptosClient();
 const ADMIN_PRIVATE_KEY = process.env.ADMIN_PRIVATE_KEY!;
 const DEFAULT_SIGNUP_REWARD = BigInt(process.env.LPT_SIGNUP_REWARD_DEFAULT ?? "10");
 const DEFAULT_REFERRAL_REWARD = BigInt(process.env.LPT_REFERRAL_REWARD_DEFAULT ?? "7");
+const APT_PURCHASE_PRICE_OCTAS_PER_LPT = BigInt(
+  process.env.LPT_APT_PRICE_OCTAS ?? "1000000"
+);
+const completedAptPurchaseHashes = new Set<string>();
 
 function normaliseAddress(address: string, fieldName: string): string {
   if (!address || typeof address !== "string") {
@@ -49,8 +56,37 @@ function parseAmount(value: unknown, fieldName = "amount"): bigint {
   return BigInt(asString);
 }
 
+function parsePositiveAmount(value: unknown, fieldName = "amount"): bigint {
+  const amount = parseAmount(value, fieldName);
+  if (amount <= 0n) {
+    throw new Error(`${fieldName} must be greater than zero.`);
+  }
+
+  return amount;
+}
+
 function stateAddress(): string {
   return normaliseAddress(LPT_STATE_ADDRESS, "LPT_STATE_ADDRESS");
+}
+
+function aptPurchaseTreasuryAddress(): string {
+  return normaliseAddress(
+    process.env.LPT_APT_TREASURY_ADDRESS || LPT_STATE_ADDRESS,
+    "LPT_APT_TREASURY_ADDRESS"
+  );
+}
+
+function buildAptTransferPayload(
+  recipientAddress: string,
+  amountOctas: bigint
+): PreparedTransactionPayload {
+  return {
+    function: "0x1::aptos_account::transfer",
+    functionArguments: [
+      normaliseAddress(recipientAddress, "recipientAddress"),
+      amountOctas,
+    ],
+  };
 }
 
 function buildPayload(functionName: string, functionArguments: unknown[]): PreparedTransactionPayload {
@@ -58,6 +94,111 @@ function buildPayload(functionName: string, functionArguments: unknown[]): Prepa
     function: lptFunction(functionName),
     functionArguments,
   };
+}
+
+function normaliseTransactionHash(transactionHash: string): string {
+  if (!transactionHash || typeof transactionHash !== "string") {
+    throw new Error("paymentTransactionHash is required.");
+  }
+
+  const normalised = transactionHash.trim().toLowerCase();
+  if (!/^0x[a-f0-9]+$/.test(normalised)) {
+    throw new Error("paymentTransactionHash must be a valid 0x-prefixed hex string.");
+  }
+
+  return normalised;
+}
+
+function getPayloadFunction(payload: unknown): string {
+  if (!payload || typeof payload !== "object") {
+    return "";
+  }
+
+  const value = (payload as { function?: unknown }).function;
+  return typeof value === "string" ? value.toLowerCase() : "";
+}
+
+function getPayloadArguments(payload: unknown): unknown[] {
+  if (!payload || typeof payload !== "object") {
+    return [];
+  }
+
+  const payloadObject = payload as {
+    arguments?: unknown;
+    function_arguments?: unknown;
+    functionArguments?: unknown;
+  };
+  const args =
+    payloadObject.arguments ??
+    payloadObject.function_arguments ??
+    payloadObject.functionArguments;
+
+  return Array.isArray(args) ? args : [];
+}
+
+function parseOnChainInteger(value: unknown, fieldName: string): bigint {
+  const asString = String(value ?? "").trim();
+  if (!/^\d+$/.test(asString)) {
+    throw new Error(`${fieldName} was not present as an on-chain integer.`);
+  }
+
+  return BigInt(asString);
+}
+
+function isSuccessfulUserTransaction(transaction: unknown): boolean {
+  if (!transaction || typeof transaction !== "object") {
+    return false;
+  }
+
+  const tx = transaction as { type?: unknown; success?: unknown };
+  return tx.type === "user_transaction" && tx.success === true;
+}
+
+async function verifyAptPurchasePayment(params: {
+  paymentTransactionHash: string;
+  buyerAddress: string;
+  treasuryAddress: string;
+  requiredAptOctas: bigint;
+}): Promise<void> {
+  const {
+    paymentTransactionHash,
+    buyerAddress,
+    treasuryAddress,
+    requiredAptOctas,
+  } = params;
+
+  const executed = await aptos.waitForTransaction({ transactionHash: paymentTransactionHash });
+  const transaction = await aptos.getTransactionByHash({ transactionHash: paymentTransactionHash });
+
+  if (!executed.success || !isSuccessfulUserTransaction(transaction)) {
+    throw new Error("APT payment transaction was not successful.");
+  }
+
+  const tx = transaction as {
+    sender?: unknown;
+    payload?: unknown;
+  };
+  const sender = normaliseAddress(String(tx.sender ?? ""), "payment sender");
+  if (sender !== buyerAddress) {
+    throw new Error("APT payment sender does not match authenticated wallet.");
+  }
+
+  const payloadFunction = getPayloadFunction(tx.payload);
+  if (payloadFunction !== "0x1::aptos_account::transfer") {
+    throw new Error("APT payment transaction is not an APT transfer.");
+  }
+
+  const args = getPayloadArguments(tx.payload);
+  const recipient = normaliseAddress(String(args[0] ?? ""), "payment recipient");
+  const amountOctas = parseOnChainInteger(args[1], "payment amount");
+
+  if (recipient !== treasuryAddress) {
+    throw new Error("APT payment recipient does not match treasury wallet.");
+  }
+
+  if (amountOctas < requiredAptOctas) {
+    throw new Error("APT payment amount is lower than the quoted price.");
+  }
 }
 
 function isStateNotInitialisedError(error: unknown): boolean {
@@ -250,6 +391,88 @@ export const lptService = {
       normaliseAddress(buyerAddress, "buyerAddress"),
       parseAmount(amount),
     ]);
+  },
+
+  async prepareAptPurchase(
+    buyerAddress: string,
+    lptAmount: unknown
+  ): Promise<{
+    payload: PreparedTransactionPayload;
+    buyerAddress: string;
+    treasuryAddress: string;
+    lptAmount: bigint;
+    aptAmountOctas: bigint;
+    priceOctasPerLpt: bigint;
+  }> {
+    await ensureLptInfrastructureInitialised();
+
+    const buyer = normaliseAddress(buyerAddress, "buyerAddress");
+    const amount = parsePositiveAmount(lptAmount, "lptAmount");
+    const treasuryAddress = aptPurchaseTreasuryAddress();
+    const aptAmountOctas = amount * APT_PURCHASE_PRICE_OCTAS_PER_LPT;
+
+    return {
+      payload: buildAptTransferPayload(treasuryAddress, aptAmountOctas),
+      buyerAddress: buyer,
+      treasuryAddress,
+      lptAmount: amount,
+      aptAmountOctas,
+      priceOctasPerLpt: APT_PURCHASE_PRICE_OCTAS_PER_LPT,
+    };
+  },
+
+  async completeAptPurchase(
+    buyerAddress: string,
+    lptAmount: unknown,
+    paymentTransactionHash: string
+  ): Promise<{
+    buyerAddress: string;
+    lptAmount: bigint;
+    aptAmountOctas: bigint;
+    priceOctasPerLpt: bigint;
+    treasuryAddress: string;
+    paymentTransactionHash: string;
+    creditTransactionHash: string;
+    creditVmStatus?: string;
+  }> {
+    await ensureLptInfrastructureInitialised();
+
+    const buyer = normaliseAddress(buyerAddress, "buyerAddress");
+    const amount = parsePositiveAmount(lptAmount, "lptAmount");
+    const transactionHash = normaliseTransactionHash(paymentTransactionHash);
+    const treasuryAddress = aptPurchaseTreasuryAddress();
+    const aptAmountOctas = amount * APT_PURCHASE_PRICE_OCTAS_PER_LPT;
+
+    if (completedAptPurchaseHashes.has(transactionHash)) {
+      throw new Error("APT payment transaction has already been credited.");
+    }
+
+    await verifyAptPurchasePayment({
+      paymentTransactionHash: transactionHash,
+      buyerAddress: buyer,
+      treasuryAddress,
+      requiredAptOctas: aptAmountOctas,
+    });
+
+    const creditResult = await writeCreditFiat(aptos, getAdminAccount(), buyer, amount);
+    if (!creditResult.success) {
+      throw new Error(
+        `Failed to credit LPT after APT payment. ${creditResult.vmStatus ?? creditResult.error}`.trim()
+      );
+    }
+
+    completedAptPurchaseHashes.add(transactionHash);
+
+    return {
+      buyerAddress: buyer,
+      lptAmount: amount,
+      aptAmountOctas,
+      priceOctasPerLpt: APT_PURCHASE_PRICE_OCTAS_PER_LPT,
+      treasuryAddress,
+      paymentTransactionHash: transactionHash,
+      creditTransactionHash: creditResult.transactionHash,
+      creditVmStatus: creditResult.vmStatus,
+    };
   },
 
   async prepareDeposit(amount: unknown): Promise<PreparedTransactionPayload> {

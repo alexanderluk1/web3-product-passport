@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useWallet } from "@aptos-labs/wallet-adapter-react";
-import { ArrowRightLeft, Coins, Flame, Gift, Landmark, Loader2, RefreshCw, Send, Wallet } from "lucide-react";
+import { ArrowRightLeft, CreditCard, Gift, Loader2, RefreshCw, Send, Wallet } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,6 +22,27 @@ type PreparedPayload = {
 type PrepareResponse = {
   success: boolean;
   payload?: PreparedPayload;
+  error?: string;
+};
+
+type AptPurchasePrepareResponse = PrepareResponse & {
+  buyerAddress?: string;
+  treasuryAddress?: string;
+  lptAmount?: string;
+  aptAmountOctas?: string;
+  priceOctasPerLpt?: string;
+};
+
+type AptPurchaseCompleteResponse = {
+  success: boolean;
+  buyerAddress?: string;
+  lptAmount?: string;
+  aptAmountOctas?: string;
+  priceOctasPerLpt?: string;
+  treasuryAddress?: string;
+  paymentTransactionHash?: string;
+  creditTransactionHash?: string;
+  creditVmStatus?: string;
   error?: string;
 };
 
@@ -62,6 +83,18 @@ function shortenAddress(address?: string | null): string {
   return `${address.slice(0, 10)}...${address.slice(-6)}`;
 }
 
+function formatAptFromOctas(octas?: string): string {
+  if (!octas || !/^\d+$/.test(octas)) {
+    return "-";
+  }
+
+  const value = BigInt(octas);
+  const whole = value / 100000000n;
+  const fraction = (value % 100000000n).toString().padStart(8, "0").replace(/0+$/, "");
+
+  return fraction ? `${whole}.${fraction}` : whole.toString();
+}
+
 function getWalletAddress(account: unknown): string {
   const maybeAccount = account as {
     address?: string | { toString: () => string };
@@ -96,10 +129,10 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
   const [activeAction, setActiveAction] = useState<string | null>(null);
   const [recipientAddress, setRecipientAddress] = useState("");
   const [transferAmount, setTransferAmount] = useState("1");
+  const [aptPurchaseAmount, setAptPurchaseAmount] = useState("10");
+  const [aptPurchaseQuote, setAptPurchaseQuote] = useState<AptPurchasePrepareResponse | null>(null);
+  const [isAptQuoteLoading, setIsAptQuoteLoading] = useState(false);
   const [referrerAddress, setReferrerAddress] = useState("");
-  const [burnAmount, setBurnAmount] = useState("1");
-  const [depositAmount, setDepositAmount] = useState("1");
-  const [feeAmount, setFeeAmount] = useState("1");
   const [initSignupReward, setInitSignupReward] = useState("10");
   const [initReferralReward, setInitReferralReward] = useState("7");
   const [mintRecipientAddress, setMintRecipientAddress] = useState("");
@@ -115,6 +148,7 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
   const walletAddress = useMemo(() => {
     return user?.walletAddress || getWalletAddress(account);
   }, [account, user?.walletAddress]);
+  const connectedWalletAddress = useMemo(() => getWalletAddress(account), [account]);
 
   const isAdmin = user?.role === "ADMIN";
   const showUserActions = mode === "user";
@@ -129,8 +163,6 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
   const signupClaimStorageKey = useMemo(() => {
     return walletAddress ? `${SIGNUP_CLAIM_STORAGE_PREFIX}${walletAddress.toLowerCase()}` : "";
   }, [walletAddress]);
-
-  const platformFeeTreasuryAddress = tokenAdminAddress || status?.adminAddress || "";
 
   const fetchJson = async <T,>(url: string, init?: RequestInit): Promise<T> => {
     const response = await fetch(url, init);
@@ -242,6 +274,50 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
     setSignupRewardClaimed(localStorage.getItem(signupClaimStorageKey) === "true");
   }, [signupClaimStorageKey]);
 
+  useEffect(() => {
+    if (!showUserActions || !accessToken || !isPositiveInteger(aptPurchaseAmount)) {
+      setAptPurchaseQuote(null);
+      return;
+    }
+
+    let shouldIgnore = false;
+    const timeoutId = window.setTimeout(async () => {
+      setIsAptQuoteLoading(true);
+
+      try {
+        const prepared = await fetchJson<AptPurchasePrepareResponse>(
+          `${API_BASE_URL}/api/tokens/purchase-apt/prepare`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...authHeaders,
+            },
+            body: JSON.stringify({ lptAmount: aptPurchaseAmount }),
+          }
+        );
+
+        if (!shouldIgnore && prepared.success) {
+          setAptPurchaseQuote(prepared);
+        }
+      } catch (error) {
+        if (!shouldIgnore) {
+          console.error("APT purchase quote failed:", error);
+          setAptPurchaseQuote(null);
+        }
+      } finally {
+        if (!shouldIgnore) {
+          setIsAptQuoteLoading(false);
+        }
+      }
+    }, 350);
+
+    return () => {
+      shouldIgnore = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [accessToken, aptPurchaseAmount, authHeaders, showUserActions]);
+
   const prepareTokenAction = async (
     endpoint: string,
     body?: Record<string, unknown>
@@ -279,7 +355,10 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
       },
     });
 
-    const txHash = (tx as { hash?: string }).hash ?? null;
+    const txHash =
+      (tx as { hash?: string; transactionHash?: string }).hash ??
+      (tx as { hash?: string; transactionHash?: string }).transactionHash ??
+      null;
     setLastTxHash(txHash);
     setTimeout(() => refreshTokenData(), 2000);
     return txHash;
@@ -305,6 +384,94 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
     } catch (error) {
       console.error(`${actionName} failed:`, error);
       const message = error instanceof Error ? error.message : "LPT transaction failed.";
+
+      if (message.toLowerCase().includes("rejected")) {
+        showError("Transaction cancelled by wallet.");
+      } else {
+        showError(message);
+      }
+    } finally {
+      setActiveAction(null);
+    }
+  };
+
+  const buyLptWithApt = async () => {
+    if (!validateAmount(aptPurchaseAmount, "LPT amount")) {
+      return;
+    }
+
+    setActiveAction("purchase-apt");
+
+    try {
+      if (!accessToken) {
+        throw new Error("Please login before buying LPT.");
+      }
+
+      if (!connected) {
+        throw new Error("Please connect your wallet before buying LPT.");
+      }
+
+      if (
+        user?.walletAddress &&
+        connectedWalletAddress &&
+        user.walletAddress.toLowerCase() !== connectedWalletAddress.toLowerCase()
+      ) {
+        throw new Error("Connected wallet must match the wallet you logged in with.");
+      }
+
+      const prepared = await fetchJson<AptPurchasePrepareResponse>(
+        `${API_BASE_URL}/api/tokens/purchase-apt/prepare`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...authHeaders,
+          },
+          body: JSON.stringify({ lptAmount: aptPurchaseAmount }),
+        }
+      );
+
+      if (!prepared.success || !prepared.payload) {
+        throw new Error(prepared.error || "APT purchase could not be prepared.");
+      }
+
+      setAptPurchaseQuote(prepared);
+
+      const paymentTxHash = await submitPreparedPayload(prepared.payload);
+      if (!paymentTxHash) {
+        throw new Error("Wallet did not return a payment transaction hash.");
+      }
+
+      const completed = await fetchJson<AptPurchaseCompleteResponse>(
+        `${API_BASE_URL}/api/tokens/purchase-apt/complete`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...authHeaders,
+          },
+          body: JSON.stringify({
+            lptAmount: aptPurchaseAmount,
+            paymentTransactionHash: paymentTxHash,
+          }),
+        }
+      );
+
+      if (!completed.success) {
+        throw new Error(completed.error || "APT purchase could not be completed.");
+      }
+
+      if (completed.creditTransactionHash) {
+        setLastTxHash(completed.creditTransactionHash);
+      }
+
+      showSuccess(
+        `LPT purchased${completed.creditTransactionHash ? `: ${completed.creditTransactionHash.slice(0, 10)}...` : "."}`
+      );
+      setTimeout(() => refreshTokenData(), 2000);
+    } catch (error) {
+      console.error("purchase-apt failed:", error);
+      const message = error instanceof Error ? error.message : "APT purchase failed.";
 
       if (message.toLowerCase().includes("rejected")) {
         showError("Transaction cancelled by wallet.");
@@ -385,46 +552,6 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
       () => prepareTokenAction("/api/tokens/claim-referral/prepare", { referrerAddress }),
       (txHash) => `Referral reward claimed${txHash ? `: ${txHash.slice(0, 10)}...` : "."}`,
       () => setIsRewardDialogOpen(false)
-    );
-  };
-
-  const burnLpt = () => {
-    if (!validateAmount(burnAmount)) {
-      return;
-    }
-
-    runTokenAction(
-      "burn",
-      () => prepareTokenAction("/api/tokens/burn/prepare", { amount: burnAmount }),
-      (txHash) => `LPT burned${txHash ? `: ${txHash.slice(0, 10)}...` : "."}`
-    );
-  };
-
-  const depositToPool = () => {
-    if (!validateAmount(depositAmount)) {
-      return;
-    }
-
-    runTokenAction(
-      "deposit",
-      () => prepareTokenAction("/api/tokens/deposit/prepare", { amount: depositAmount }),
-      (txHash) => `LPT deposited${txHash ? `: ${txHash.slice(0, 10)}...` : "."}`
-    );
-  };
-
-  const payPlatformFee = () => {
-    if (!validateAddress(platformFeeTreasuryAddress, "platform fee treasury") || !validateAmount(feeAmount)) {
-      return;
-    }
-
-    runTokenAction(
-      "pay-fee",
-      () =>
-        prepareTokenAction("/api/tokens/pay-fee/prepare", {
-          treasuryAddress: platformFeeTreasuryAddress,
-          amount: feeAmount,
-        }),
-      (txHash) => `Platform fee paid${txHash ? `: ${txHash.slice(0, 10)}...` : "."}`
     );
   };
 
@@ -566,130 +693,86 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
             <Separator />
 
             <div className="grid gap-4 lg:grid-cols-2">
-          <div className="rounded-lg border bg-white/70 p-4">
-            <div className="mb-4 flex items-center">
-              <Send className="mr-2 h-5 w-5 text-blue-600" />
-              <div>
-                <h3 className="font-semibold">P2P Transfer</h3>
-                <p className="text-sm text-gray-600">Send LPT to another wallet.</p>
+              <div className="rounded-lg border bg-white/70 p-4">
+                <div className="mb-4 flex items-center">
+                  <Send className="mr-2 h-5 w-5 text-blue-600" />
+                  <div>
+                    <h3 className="font-semibold">P2P Transfer</h3>
+                    <p className="text-sm text-gray-600">Send LPT to another wallet.</p>
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  <div className="grid gap-3 md:grid-cols-[1fr_120px]">
+                    <div>
+                      <Label htmlFor="lptRecipient">Recipient Wallet</Label>
+                      <Input
+                        id="lptRecipient"
+                        placeholder="0x..."
+                        value={recipientAddress}
+                        onChange={(event) => setRecipientAddress(event.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="lptTransferAmount">Amount</Label>
+                      <Input
+                        id="lptTransferAmount"
+                        inputMode="numeric"
+                        value={transferAmount}
+                        onChange={(event) => setTransferAmount(event.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <Button
+                    className="w-full bg-blue-600 hover:bg-blue-700"
+                    onClick={sendLpt}
+                    disabled={isBusy || !accessToken || !connected}
+                  >
+                    <ArrowRightLeft className="mr-2 h-4 w-4" />
+                    {actionButtonLabel("transfer", "Send LPT")}
+                  </Button>
+                </div>
               </div>
-            </div>
-            <div className="space-y-3">
-              <div className="grid gap-3 md:grid-cols-[1fr_120px]">
-              <div>
-                <Label htmlFor="lptRecipient">Recipient Wallet</Label>
-                <Input
-                  id="lptRecipient"
-                  placeholder="0x..."
-                  value={recipientAddress}
-                  onChange={(event) => setRecipientAddress(event.target.value)}
-                />
-              </div>
-              <div>
-                <Label htmlFor="lptTransferAmount">Amount</Label>
-                <Input
-                  id="lptTransferAmount"
-                  inputMode="numeric"
-                  value={transferAmount}
-                  onChange={(event) => setTransferAmount(event.target.value)}
-                />
-              </div>
-              </div>
-              <Button
-                className="w-full bg-blue-600 hover:bg-blue-700"
-                onClick={sendLpt}
-                disabled={isBusy || !accessToken || !connected}
-              >
-                <ArrowRightLeft className="mr-2 h-4 w-4" />
-                {actionButtonLabel("transfer", "Send LPT")}
-              </Button>
-            </div>
-          </div>
 
-          <div className="rounded-lg border bg-white/70 p-4">
-            <div className="mb-4 flex items-center">
-              <Landmark className="mr-2 h-5 w-5 text-cyan-700" />
-              <div>
-                <h3 className="font-semibold">Platform Fee</h3>
-                <p className="text-sm text-gray-600">Transfer LPT to a treasury wallet as a platform fee.</p>
+              <div className="rounded-lg border bg-white/70 p-4">
+                <div className="mb-4 flex items-center">
+                  <CreditCard className="mr-2 h-5 w-5 text-emerald-600" />
+                  <div>
+                    <h3 className="font-semibold">Buy LPT with APT</h3>
+                    <p className="text-sm text-gray-600">Pay APT and receive LPT after payment verification.</p>
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  <div>
+                    <Label htmlFor="lptAptPurchaseAmount">LPT Amount</Label>
+                    <Input
+                      id="lptAptPurchaseAmount"
+                      inputMode="numeric"
+                      value={aptPurchaseAmount}
+                      onChange={(event) => {
+                        setAptPurchaseAmount(event.target.value);
+                        setAptPurchaseQuote(null);
+                      }}
+                    />
+                  </div>
+                  <div className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-900">
+                    Rate: {formatAptFromOctas(aptPurchaseQuote?.priceOctasPerLpt)} APT / LPT
+                    <span className="block">
+                      APT due: {isAptQuoteLoading ? "Calculating..." : `${formatAptFromOctas(aptPurchaseQuote?.aptAmountOctas)} APT`}
+                    </span>
+                    <span className="block text-xs text-emerald-700">
+                      The payment uses the latest backend quote before opening your wallet.
+                    </span>
+                  </div>
+                  <Button
+                    className="w-full bg-emerald-600 hover:bg-emerald-700"
+                    onClick={buyLptWithApt}
+                    disabled={isBusy || !accessToken || !connected}
+                  >
+                    <CreditCard className="mr-2 h-4 w-4" />
+                    {actionButtonLabel("purchase-apt", "Buy LPT")}
+                  </Button>
+                </div>
               </div>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <Label htmlFor="lptFeeAmount">Amount</Label>
-                <Input
-                  id="lptFeeAmount"
-                  inputMode="numeric"
-                  value={feeAmount}
-                  onChange={(event) => setFeeAmount(event.target.value)}
-                />
-              </div>
-              <Button
-                className="w-full bg-cyan-700 hover:bg-cyan-800"
-                onClick={payPlatformFee}
-                disabled={isBusy || !accessToken || !connected}
-              >
-                {actionButtonLabel("pay-fee", "Pay Platform Fee")}
-              </Button>
-            </div>
-          </div>
-
-          <div className="rounded-lg border bg-white/70 p-4">
-            <div className="mb-4 flex items-center">
-              <Coins className="mr-2 h-5 w-5 text-indigo-600" />
-              <div>
-                <h3 className="font-semibold">Subsidy Pool Deposit</h3>
-                <p className="text-sm text-gray-600">Deposit LPT to support subsidised platform actions.</p>
-              </div>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <Label htmlFor="lptDepositAmount">Amount</Label>
-                <Input
-                  id="lptDepositAmount"
-                  inputMode="numeric"
-                  value={depositAmount}
-                  onChange={(event) => setDepositAmount(event.target.value)}
-                />
-              </div>
-              <Button
-                className="w-full bg-indigo-600 hover:bg-indigo-700"
-                onClick={depositToPool}
-                disabled={isBusy || !accessToken || !connected}
-              >
-                {actionButtonLabel("deposit", "Deposit to Pool")}
-              </Button>
-            </div>
-          </div>
-
-          <div className="rounded-lg border bg-white/70 p-4">
-            <div className="mb-4 flex items-center">
-              <Flame className="mr-2 h-5 w-5 text-red-600" />
-              <div>
-                <h3 className="font-semibold">Retire LPT</h3>
-                <p className="text-sm text-gray-600">Burn LPT outside the passport-service flow.</p>
-              </div>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <Label htmlFor="lptBurnAmount">Amount</Label>
-                <Input
-                  id="lptBurnAmount"
-                  inputMode="numeric"
-                  value={burnAmount}
-                  onChange={(event) => setBurnAmount(event.target.value)}
-                />
-              </div>
-              <Button
-                variant="destructive"
-                className="w-full"
-                onClick={burnLpt}
-                disabled={isBusy || !accessToken || !connected}
-              >
-                {actionButtonLabel("burn", "Burn LPT")}
-              </Button>
-            </div>
-          </div>
 
             </div>
           </>

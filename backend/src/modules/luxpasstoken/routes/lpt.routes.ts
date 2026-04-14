@@ -10,6 +10,8 @@ import {
   prepareClaimSignupHandler,
   prepareClaimReferralHandler,
   prepareCreditFiatHandler,
+  prepareAptPurchaseHandler,
+  completeAptPurchaseHandler,
   prepareDepositHandler,
   prepareAllocateHandler,
   preparePayFeeHandler,
@@ -45,6 +47,8 @@ lptRouter.get("/", (_req: Request, res: Response) => {
       "POST /api/tokens/claim-signup/prepare",
       "POST /api/tokens/claim-referral/prepare",
       "POST /api/tokens/credit-fiat/prepare",
+      "POST /api/tokens/purchase-apt/prepare",
+      "POST /api/tokens/purchase-apt/complete",
       "POST /api/tokens/deposit/prepare",
       "POST /api/tokens/allocate/prepare",
       "POST /api/tokens/pay-fee/prepare",
@@ -63,6 +67,8 @@ lptRouter.post("/burn/prepare", requireAuth, prepareBurnHandler);
 lptRouter.post("/claim-signup/prepare", requireAuth, prepareClaimSignupHandler);
 lptRouter.post("/claim-referral/prepare", requireAuth, prepareClaimReferralHandler);
 lptRouter.post("/credit-fiat/prepare", requireAuth, requireRole("ADMIN"), prepareCreditFiatHandler);
+lptRouter.post("/purchase-apt/prepare", requireAuth, prepareAptPurchaseHandler);
+lptRouter.post("/purchase-apt/complete", requireAuth, completeAptPurchaseHandler);
 lptRouter.post("/deposit/prepare", requireAuth, prepareDepositHandler);
 lptRouter.post("/allocate/prepare", requireAuth, requireRole("ADMIN"), prepareAllocateHandler);
 lptRouter.post("/pay-fee/prepare", requireAuth, preparePayFeeHandler);
