@@ -11,6 +11,8 @@ import {
   viewRewardConfig,
   viewSignupClaimed,
   viewSupply,
+  viewLptEventFeed,
+  resolveLptEventFeedLimits,
 } from "../../../chains/luxpasstoken/readers";
 import {
   creditFiat as writeCreditFiat,
@@ -430,6 +432,23 @@ export const lptService = {
     const owner = normaliseAddress(ownerAddress, "ownerAddress");
     const claimed = await viewSignupClaimed(owner);
     return { ownerAddress: owner, claimed };
+  },
+
+  async getLptEventFeed(query: {
+    limit?: unknown;
+    perSource?: unknown;
+    /** JWT wallet; events are restricted to this address as a counterparty. */
+    viewerWalletAddress: string;
+  }) {
+    await ensureLptInfrastructureInitialised();
+    const { perSourceLimit, maxItems } = resolveLptEventFeedLimits(query);
+    const viewer = normaliseAddress(query.viewerWalletAddress, "viewerWalletAddress");
+    const items = await viewLptEventFeed({
+      perSourceLimit,
+      maxItems,
+      walletAddress: viewer,
+    });
+    return { items, perSourceLimit, maxItems, viewerWalletAddress: viewer };
   },
 
   prepareInit(signupRewardAmount: unknown, referralRewardAmount: unknown): PreparedTransactionPayload {

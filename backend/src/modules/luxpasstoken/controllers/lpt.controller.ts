@@ -248,3 +248,20 @@ export async function getSignupClaimedHandler(req: Request, res: Response) {
     return handleError(res, error, "Failed to fetch signup reward status.");
   }
 }
+
+export async function getLptEventFeedHandler(req: Request, res: Response) {
+  try {
+    const wallet = req.user?.walletAddress;
+    if (!wallet) {
+      return res.status(401).json({ success: false, error: "Wallet address is missing from the session." });
+    }
+    const result = await lptService.getLptEventFeed({
+      limit: req.query.limit,
+      perSource: req.query.perSource,
+      viewerWalletAddress: wallet,
+    });
+    return res.status(200).json({ success: true, ...result });
+  } catch (error) {
+    return handleError(res, error, "Failed to fetch LPT event feed.");
+  }
+}

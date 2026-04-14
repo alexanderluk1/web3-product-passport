@@ -23,6 +23,7 @@ import {
   getAdminHandler,
   getRewardConfigHandler,
   getSignupClaimedHandler,
+  getLptEventFeedHandler,
 } from "../controllers/lpt.controller";
 import { simulateLptHandler } from "../controllers/lpt.simcontrollers";
 
@@ -41,6 +42,7 @@ lptRouter.get("/", (_req: Request, res: Response) => {
       "GET /api/tokens/admin",
       "GET /api/tokens/reward-config",
       "GET /api/tokens/signup-claimed/:ownerAddress",
+      "GET /api/tokens/events?limit=&perSource= (session wallet only + timestamps)",
       "GET /api/tokens/purchase-apt/rate",
       "POST /api/tokens/init/prepare",
       "POST /api/tokens/mint/prepare",
@@ -85,5 +87,6 @@ lptRouter.get("/pool", requireAuth, getPoolHandler);
 lptRouter.get("/admin", requireAuth, getAdminHandler);
 lptRouter.get("/reward-config", requireAuth, getRewardConfigHandler);
 lptRouter.get("/signup-claimed/:ownerAddress", requireAuth, getSignupClaimedHandler);
+lptRouter.get("/events", requireAuth, getLptEventFeedHandler);
 
 export default lptRouter;

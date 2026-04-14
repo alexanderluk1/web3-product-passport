@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { useWallet } from "@aptos-labs/wallet-adapter-react";
-import { ArrowRightLeft, CreditCard, Gift, Loader2, RefreshCw, Send, Wallet } from "lucide-react";
+import {
+  ArrowRightLeft,
+  CreditCard,
+  Gift,
+  Loader2,
+  RefreshCw,
+  ScrollText,
+  Send,
+  Wallet,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -70,6 +79,27 @@ type SignupClaimedResponse = {
   claimed: boolean;
 };
 
+type LptEventFeedItem = {
+  tag: string;
+  source: string;
+  version: string;
+  sequenceNumber: string;
+  eventType: string | null;
+  data: Record<string, unknown>;
+  transactionVersion: string | null;
+  /** ISO 8601 UTC from chain transaction timestamp when resolved. */
+  occurredAt: string | null;
+};
+
+type LptEventFeedResponse = {
+  success: boolean;
+  items?: LptEventFeedItem[];
+  maxItems?: number;
+  perSourceLimit?: number;
+  viewerWalletAddress?: string;
+  error?: string;
+};
+
 type LptPanelProps = {
   mode?: "user" | "admin";
 };
@@ -88,6 +118,223 @@ function shortenAddress(address?: string | null): string {
   }
 
   return `${address.slice(0, 10)}...${address.slice(-6)}`;
+}
+
+function strField(data: Record<string, unknown>, key: string): string {
+  const v = data[key];
+  return typeof v === "string" ? v : v != null ? String(v) : "";
+}
+
+/** Match backend canonical Aptos account hex for comparisons. */
+function normalizeAptosAddress(address: string): string {
+  const normalized = address.trim().toLowerCase();
+  if (!normalized.startsWith("0x")) {
+    return normalized;
+  }
+  const hex = normalized.slice(2).replace(/^0+/, "");
+  return `0x${hex || "0"}`;
+}
+
+function dataAddr(data: Record<string, unknown>, key: string): string {
+  const raw = data[key];
+  if (raw === undefined || raw === null) {
+    return "";
+  }
+  const s = String(raw).trim();
+  if (!s) {
+    return "";
+  }
+  return normalizeAptosAddress(s);
+}
+
+type LptFlowDirection = "in" | "out" | "neutral";
+
+function getLptEventAmountDisplay(item: LptEventFeedItem): string {
+  const d = item.data;
+  let n = strField(d, "amount");
+  if (!n && item.tag === "LPT_REFERRAL_REWARD") {
+    n = strField(d, "amount_each");
+  }
+  if (!n) {
+    return "—";
+  }
+  return `${n} LPT`;
+}
+
+function getLptActivityDirection(item: LptEventFeedItem, viewer: string): LptFlowDirection {
+  if (!viewer) {
+    return "neutral";
+  }
+  const v = viewer;
+  const d = item.data;
+
+  switch (item.tag) {
+    case "LPT_MINT":
+    case "LPT_SIGNUP_REWARD":
+    case "LPT_FIAT_CREDIT":
+      return "in";
+    case "LPT_REFERRAL_REWARD":
+      return "in";
+    case "LPT_BURN":
+      return "out";
+    case "LPT_PASSPORT_SERVICE":
+      return "out";
+    case "LPT_TRANSFER": {
+      const from = dataAddr(d, "from");
+      const to = dataAddr(d, "to");
+      if (from === v && to === v) {
+        return "neutral";
+      }
+      if (to === v) {
+        return "in";
+      }
+      if (from === v) {
+        return "out";
+      }
+      return "neutral";
+    }
+    case "LPT_PLATFORM_FEE":
+      return dataAddr(d, "payer") === v ? "out" : dataAddr(d, "treasury") === v ? "in" : "neutral";
+    case "LPT_SUBSIDY": {
+      const kind = strField(d, "kind");
+      const acct = dataAddr(d, "account");
+      if (kind === "0") {
+        return acct === v ? "out" : "neutral";
+      }
+      if (kind === "1") {
+        return acct === v ? "in" : "neutral";
+      }
+      return "neutral";
+    }
+    default:
+      return "neutral";
+  }
+}
+
+function getLptActivityFlowDescription(item: LptEventFeedItem, viewer: string): string {
+  const v = viewer;
+  const d = item.data;
+
+  switch (item.tag) {
+    case "LPT_MINT": {
+      const sub = formatMintSubtag(d);
+      return sub ? `Mint · ${sub}` : "Mint · credited to your wallet";
+    }
+    case "LPT_BURN":
+      return "Burned from your balance";
+    case "LPT_TRANSFER": {
+      const from = dataAddr(d, "from");
+      const to = dataAddr(d, "to");
+      if (from === v && to === v) {
+        return "Transfer within your wallet";
+      }
+      if (to === v) {
+        return `Received from ${shortenAddress(strField(d, "from"))}`;
+      }
+      if (from === v) {
+        return `Sent to ${shortenAddress(strField(d, "to"))}`;
+      }
+      return `${shortenAddress(strField(d, "from"))} → ${shortenAddress(strField(d, "to"))}`;
+    }
+    case "LPT_SIGNUP_REWARD":
+      return "Signup reward";
+    case "LPT_REFERRAL_REWARD": {
+      if (dataAddr(d, "referrer") === v) {
+        return `Referral credit · referee ${shortenAddress(strField(d, "referee"))}`;
+      }
+      if (dataAddr(d, "referee") === v) {
+        return `Referral credit · referrer ${shortenAddress(strField(d, "referrer"))}`;
+      }
+      return `Referrer ${shortenAddress(strField(d, "referrer"))} · referee ${shortenAddress(strField(d, "referee"))}`;
+    }
+    case "LPT_FIAT_CREDIT":
+      return "Purchase / fiat credit to your wallet";
+    case "LPT_PLATFORM_FEE": {
+      if (dataAddr(d, "payer") === v) {
+        return `Platform fee · treasury ${shortenAddress(strField(d, "treasury"))}`;
+      }
+      if (dataAddr(d, "treasury") === v) {
+        return `Platform fee received · from ${shortenAddress(strField(d, "payer"))}`;
+      }
+      return `${shortenAddress(strField(d, "payer"))} → treasury ${shortenAddress(strField(d, "treasury"))}`;
+    }
+    case "LPT_PASSPORT_SERVICE":
+      return "Passport service (LPT burn) · your issuer wallet";
+    case "LPT_SUBSIDY": {
+      const kind = strField(d, "kind");
+      if (kind === "0") {
+        return "Subsidy pool deposit (from your wallet)";
+      }
+      if (kind === "1") {
+        return "Subsidy allocation to your wallet";
+      }
+      return `Subsidy · account ${shortenAddress(strField(d, "account"))}`;
+    }
+    default:
+      return "";
+  }
+}
+
+function amountTextClass(direction: LptFlowDirection): string {
+  switch (direction) {
+    case "in":
+      return "font-semibold tabular-nums text-green-600";
+    case "out":
+      return "font-semibold tabular-nums text-red-600";
+    default:
+      return "font-semibold tabular-nums text-gray-700";
+  }
+}
+
+function lptEventBadgeClass(tag: string): string {
+  switch (tag) {
+    case "LPT_MINT":
+      return "bg-emerald-100 text-emerald-900 border-emerald-200";
+    case "LPT_BURN":
+    case "LPT_PASSPORT_SERVICE":
+      return "bg-orange-100 text-orange-900 border-orange-200";
+    case "LPT_TRANSFER":
+      return "bg-blue-100 text-blue-900 border-blue-200";
+    case "LPT_PLATFORM_FEE":
+      return "bg-violet-100 text-violet-900 border-violet-200";
+    case "LPT_SIGNUP_REWARD":
+    case "LPT_REFERRAL_REWARD":
+      return "bg-amber-100 text-amber-900 border-amber-200";
+    case "LPT_FIAT_CREDIT":
+      return "bg-cyan-100 text-cyan-900 border-cyan-200";
+    case "LPT_SUBSIDY":
+      return "bg-slate-100 text-slate-900 border-slate-200";
+    default:
+      return "bg-gray-100 text-gray-800 border-gray-200";
+  }
+}
+
+function formatLptEventLocalDateTime(isoUtc: string | null | undefined): string {
+  if (!isoUtc) {
+    return "Time pending";
+  }
+  const d = new Date(isoUtc);
+  if (Number.isNaN(d.getTime())) {
+    return "Time pending";
+  }
+  return d.toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+function formatMintSubtag(data: Record<string, unknown>): string | null {
+  const t = strField(data, "tag");
+  if (!t) {
+    return null;
+  }
+  const map: Record<string, string> = {
+    "0": "admin mint",
+    "1": "signup",
+    "2": "referral",
+    "3": "fiat",
+  };
+  return map[t] ?? `mint tag ${t}`;
 }
 
 function formatAptFromOctas(octas?: string): string {
@@ -151,6 +398,11 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
   const [lastTxHash, setLastTxHash] = useState<string | null>(null);
   const [signupRewardClaimed, setSignupRewardClaimed] = useState(false);
   const [isRewardDialogOpen, setIsRewardDialogOpen] = useState(false);
+  const [lptEvents, setLptEvents] = useState<LptEventFeedItem[]>([]);
+  const [lptEventsLoading, setLptEventsLoading] = useState(false);
+  const [lptEventsError, setLptEventsError] = useState<string | null>(null);
+  /** Canonical 0x address used to classify in/out flows (from API when available). */
+  const [lptEventViewerCanon, setLptEventViewerCanon] = useState("");
 
   const walletAddress = useMemo(() => {
     return user?.walletAddress || getWalletAddress(account);
@@ -170,6 +422,11 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
   const signupClaimStorageKey = useMemo(() => {
     return walletAddress ? `${SIGNUP_CLAIM_STORAGE_PREFIX}${walletAddress.toLowerCase()}` : "";
   }, [walletAddress]);
+
+  const lptActivityViewer = useMemo(
+    () => lptEventViewerCanon || normalizeAptosAddress(walletAddress || ""),
+    [lptEventViewerCanon, walletAddress]
+  );
 
   const fetchJson = async <T,>(url: string, init?: RequestInit): Promise<T> => {
     const response = await fetch(url, init);
@@ -255,6 +512,33 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
         setSubsidyPoolBalance("0");
         setTokenAdminAddress(null);
         setSignupRewardClaimed(false);
+      }
+
+      if (showUserActions && accessToken) {
+        setLptEventsLoading(true);
+        setLptEventsError(null);
+        try {
+          const feed = await fetchJson<LptEventFeedResponse>(
+            `${API_BASE_URL}/api/tokens/events?limit=100`,
+            { headers: authHeaders }
+          );
+          setLptEvents(Array.isArray(feed.items) ? feed.items : []);
+          setLptEventViewerCanon(
+            normalizeAptosAddress(feed.viewerWalletAddress || walletAddress || "")
+          );
+        } catch (eventError) {
+          console.error("LPT event feed failed:", eventError);
+          setLptEvents([]);
+          setLptEventViewerCanon("");
+          setLptEventsError(eventError instanceof Error ? eventError.message : "Could not load LPT activity.");
+        } finally {
+          setLptEventsLoading(false);
+        }
+      } else {
+        setLptEvents([]);
+        setLptEventViewerCanon("");
+        setLptEventsError(null);
+        setLptEventsLoading(false);
       }
 
       if (showToast) {
@@ -669,6 +953,7 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
   const isBusy = Boolean(activeAction) || isLoading;
 
   return (
+    <div className="space-y-6">
     <Card className="border-0 shadow-xl bg-white/80 backdrop-blur-sm">
       <CardHeader>
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -1029,5 +1314,83 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
         )}
       </CardContent>
     </Card>
+
+    {showUserActions && accessToken ? (
+      <Card className="border-0 shadow-xl bg-white/80 backdrop-blur-sm">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-lg flex items-center gap-2">
+            <ScrollText className="h-5 w-5 text-emerald-600" />
+            Your LPT activity
+          </CardTitle>
+          <CardDescription>
+            On-chain LPT events where your logged-in wallet sent, received, or was credited or charged. Each row shows
+            the transaction time when the chain API returned a timestamp for that ledger version.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {lptEventsError ? (
+            <p className="text-sm text-red-600">{lptEventsError}</p>
+          ) : null}
+          <div className="relative">
+            {lptEventsLoading && lptEvents.length > 0 ? (
+              <div
+                className="pointer-events-none absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-white/90 shadow-sm"
+                aria-hidden
+              >
+                <Loader2 className="h-4 w-4 animate-spin text-emerald-600" />
+              </div>
+            ) : null}
+          <div
+            className="max-h-[min(50vh,28rem)] overflow-y-auto overscroll-y-contain rounded-lg border border-gray-200/80 bg-white/60 pr-1"
+            style={{ WebkitOverflowScrolling: "touch" }}
+          >
+            {lptEventsLoading && lptEvents.length === 0 ? (
+              <div className="flex items-center justify-center gap-2 py-12 text-sm text-gray-500">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading activity…
+              </div>
+            ) : lptEvents.length === 0 ? (
+              <p className="py-8 text-center text-sm text-gray-500">
+                No LPT activity for your wallet in the loaded window yet.
+              </p>
+            ) : (
+              <ul className="divide-y divide-gray-100">
+                {lptEvents.map((item, index) => {
+                  const mintSub = item.tag === "LPT_MINT" ? formatMintSubtag(item.data) : null;
+                  const amountDisplay = getLptEventAmountDisplay(item);
+                  const direction =
+                    amountDisplay === "—" ? "neutral" : getLptActivityDirection(item, lptActivityViewer);
+                  const flowText = getLptActivityFlowDescription(item, lptActivityViewer);
+                  return (
+                    <li key={`${item.version}-${item.sequenceNumber}-${item.tag}-${index}`} className="px-3 py-2.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline" className={`font-mono text-[10px] ${lptEventBadgeClass(item.tag)}`}>
+                          {item.tag.replace(/^LPT_/, "")}
+                        </Badge>
+                        {mintSub ? (
+                          <span className="text-[10px] uppercase tracking-wide text-gray-500">{mintSub}</span>
+                        ) : null}
+                        <span className="ml-auto shrink-0 text-[10px] text-gray-500 tabular-nums">
+                          {formatLptEventLocalDateTime(item.occurredAt)}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-sm">
+                        <span className={amountTextClass(direction)}>{amountDisplay}</span>
+                        {flowText ? (
+                          <span className="text-gray-700"> · {flowText}</span>
+                        ) : null}
+                      </p>
+                      <p className="mt-0.5 font-mono text-[10px] text-gray-400">Ledger v{item.version || "?"}</p>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+          </div>
+        </CardContent>
+      </Card>
+    ) : null}
+    </div>
   );
 }
