@@ -1,6 +1,7 @@
 "use client";
 
 import { AptosWalletAdapterProvider } from "@aptos-labs/wallet-adapter-react";
+import { Network, AptosConfig } from "@aptos-labs/ts-sdk";
 import { ReactNode } from "react";
 
 interface WalletProviderProps {
@@ -13,7 +14,7 @@ export const WalletProvider = ({ children }: WalletProviderProps) => {
   };
 
   return (
-    <AptosWalletAdapterProvider 
+    <AptosWalletAdapterProvider
       autoConnect={true}
       onError={handleError}
     >

@@ -1,6 +1,18 @@
 import { Aptos, AptosConfig, Network } from "@aptos-labs/ts-sdk";
 
 export function makeAptosClient() {
+  // local network config
+  const fullnodeUrl = process.env.APTOS_NODE_URL;
+
+  if (fullnodeUrl) {
+    return new Aptos(
+      new AptosConfig({
+        network: Network.CUSTOM,
+        fullnode: fullnodeUrl,
+        faucet: process.env.APTOS_FAUCET_URL,
+      })
+    );
+  }
   const network = (process.env.APTOS_NETWORK || "devnet").toLowerCase();
 
   const cfg = new AptosConfig({
