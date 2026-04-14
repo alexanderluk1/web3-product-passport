@@ -239,10 +239,10 @@ export async function prepareTransferPassportWithBurnHandler(
 
     const body = req.body as PrepareTransferWithBurnRequestBody;
 
-    if (!body.passportObjectAddress || !body.newOwnerAddress || body.burnAmount == null) {
+    if (!body.passportObjectAddress || !body.newOwnerAddress) {
       return res.status(400).json({
         success: false,
-        error: "passportObjectAddress, newOwnerAddress, and burnAmount are required.",
+        error: "passportObjectAddress and newOwnerAddress are required.",
       });
     }
 
@@ -282,10 +282,10 @@ export async function prepareTransferPassportWithBurnLptHandler(
 
     const body = req.body as PrepareTransferWithBurnLptRequestBody;
 
-    if (!body.passportObjectAddress || !body.newOwnerAddress || body.burnAmount == null) {
+    if (!body.passportObjectAddress || !body.newOwnerAddress) {
       return res.status(400).json({
         success: false,
-        error: "passportObjectAddress, newOwnerAddress, and burnAmount are required.",
+        error: "passportObjectAddress and newOwnerAddress are required.",
       });
     }
 

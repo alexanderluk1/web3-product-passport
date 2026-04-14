@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Shield, Plus, FileText, Package, Zap, Calendar, Building, Upload, X, Image as ImageIcon, Wallet, User, RefreshCw, ExternalLink, Loader2, Copy, Search } from "lucide-react";
 import { Link } from "react-router-dom";
 import { showSuccess, showError } from "@/utils/toast";
@@ -17,6 +18,11 @@ import { useAuth } from "@/hooks/useAuth";
 import { useWallet } from "@aptos-labs/wallet-adapter-react";
 
 const ALLOWED_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const API_BASE_URL = "http://localhost:3001";
+const FIXED_PASSPORT_SERVICE_LPT_FEE = "5";
+const FIXED_PASSPORT_SERVICE_APT_FEE = "0.05";
+
+type PassportFeeMode = "apt" | "lpt";
 
 // Pinata IPFS Gateway Configuration
 const PINATA_GATEWAY_URL = "https://amaranth-passive-chicken-549.mypinata.cloud";
@@ -69,6 +75,9 @@ const IssuerDashboard = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchProductId, setSearchProductId] = useState("");
   const [isSearching, setIsSearching] = useState(false);
+  const [lptBalance, setLptBalance] = useState("0");
+  const [lptBalanceLoading, setLptBalanceLoading] = useState(false);
+  const [mintFeeMode, setMintFeeMode] = useState<PassportFeeMode>("apt");
   const [formData, setFormData] = useState({
     name: "",
     brand: "",
@@ -88,6 +97,10 @@ const IssuerDashboard = () => {
       fetchProducts();
     }
   }, [accessToken]);
+
+  useEffect(() => {
+    fetchLptBalance();
+  }, [accessToken, user?.walletAddress, account]);
 
   // Helper function to convert IPFS URI to Pinata gateway URL
   const convertIPFSToHTTP = (uri: string): string => {
@@ -437,6 +450,51 @@ const IssuerDashboard = () => {
     return "";
   };
 
+  const getActiveWalletAddress = () => getAddressString(account) || user?.walletAddress;
+
+  const formatLptBalance = () => {
+    if (lptBalanceLoading) return "Loading...";
+    return `${lptBalance} LPT`;
+  };
+
+  const fetchLptBalance = async () => {
+    if (!accessToken) {
+      setLptBalance("0");
+      return;
+    }
+
+    const walletAddress = getActiveWalletAddress();
+    if (!walletAddress) {
+      setLptBalance("0");
+      return;
+    }
+
+    setLptBalanceLoading(true);
+
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/tokens/balance/${encodeURIComponent(walletAddress)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.error || data?.message || "Failed to load LPT balance.");
+      }
+
+      setLptBalance(String(data.balance ?? "0"));
+    } catch (error) {
+      console.error("Failed to fetch issuer LPT balance:", error);
+      setLptBalance("0");
+    } finally {
+      setLptBalanceLoading(false);
+    }
+  };
+
   // Helper function to convert byte vectors to arrays
   const convertToByteArray = (data: any): number[] => {
     console.log("🔧 Converting to byte array:", { data, type: typeof data });
@@ -515,6 +573,25 @@ const IssuerDashboard = () => {
       return;
     }
 
+    const connectedWalletAddress = getAddressString(account).toLowerCase();
+    const authenticatedWalletAddress = user?.walletAddress?.toLowerCase();
+    if (!connectedWalletAddress) {
+      showError("Please connect your wallet before minting a passport.");
+      return;
+    }
+    if (authenticatedWalletAddress && connectedWalletAddress !== authenticatedWalletAddress) {
+      showError("Connected wallet must match the wallet you logged in with.");
+      return;
+    }
+
+    if (mintFeeMode === "lpt") {
+      const currentBalance = BigInt(/^\d+$/.test(lptBalance) ? lptBalance : "0");
+      if (BigInt(FIXED_PASSPORT_SERVICE_LPT_FEE) > currentBalance) {
+        showError(`You need ${FIXED_PASSPORT_SERVICE_LPT_FEE} LPT for this passport mint.`);
+        return;
+      }
+    }
+
     setIsCreating(true);
     
     try {
@@ -567,7 +644,12 @@ const IssuerDashboard = () => {
 
       // Send multipart/form-data request to backend
       console.log("📡 Sending multipart request to backend...");
-      const response = await fetch("http://localhost:3001/api/passports/mint/prepare", {
+      const mintEndpoint =
+        mintFeeMode === "lpt"
+          ? "/api/passports/mint-with-burn-lpt/prepare"
+          : "/api/passports/mint-with-burn/prepare";
+      console.log("Sending mint prepare request to backend:", mintEndpoint);
+      const response = await fetch(`${API_BASE_URL}${mintEndpoint}`, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${accessToken}`,
@@ -634,9 +716,10 @@ const IssuerDashboard = () => {
               convertToByteArray(serialPlain),
               metadataUri,
             ];
-          } else if (rawArgs.length === 6) {
-            // Handle 6-argument format: [registry, owner, serial, metadataUri, metadataBytes, transferable]
-            console.log("🔧 Processing 6-argument format");
+          } else if (rawArgs.length === 6 || rawArgs.length === 8 || rawArgs.length === 10) {
+            // Handle 6-argument mint, 8-argument mint_with_burn,
+            // and 10-argument mint_with_burn_lpt payloads.
+            console.log(`🔧 Processing ${rawArgs.length}-argument mint format`);
             const [
               registryAddr,
               ownerAddr,
@@ -644,6 +727,7 @@ const IssuerDashboard = () => {
               metadataUri,
               metadataBytes,
               transferable,
+              ...extraArgs
             ] = rawArgs;
 
             processedArgs = [
@@ -654,10 +738,11 @@ const IssuerDashboard = () => {
               convertToByteArray(metadataBytes),
               // Properly convert transferable to boolean
               transferable === true || transferable === "true" || transferable === 1,
+              ...extraArgs,
             ];
           } else {
             throw new Error(
-              `Unsupported payload format. Expected 3 or 6 arguments, got ${rawArgs.length}. Args: ${JSON.stringify(rawArgs)}`
+              `Unsupported payload format. Expected 3, 6, 8, or 10 arguments, got ${rawArgs.length}. Args: ${JSON.stringify(rawArgs)}`
             );
           }
 
@@ -667,7 +752,22 @@ const IssuerDashboard = () => {
           console.log("🔧 Original arguments:", rawArgs);
           console.log("🔧 Processed arguments:", processedArgs);
           console.log("🔧 Processed argument types:", processedArgs.map((arg, i) => `${i}: ${typeof arg} = ${Array.isArray(arg) ? `array[${arg.length}]` : typeof arg}`));
-          
+          if (mintFeeMode === "apt" && backendData.feePayload) {
+            showSuccess(`Paying ${backendData.feeAmountApt ?? FIXED_PASSPORT_SERVICE_APT_FEE} APT service fee...`);
+            const feeTx = await signAndSubmitTransaction({
+              data: {
+                function: backendData.feePayload.function,
+                functionArguments: backendData.feePayload.functionArguments,
+              },
+              options: {
+                maxGasAmount: 200000,
+                gasUnitPrice: 100,
+                expirationSecondsFromNow: 60,
+              },
+            });
+            console.log("APT service fee transaction submitted:", feeTx);
+          }
+
           // Submit transaction to Aptos blockchain via wallet
           const transactionPayload = {
             data: {
@@ -688,7 +788,11 @@ const IssuerDashboard = () => {
           console.log("✅ Blockchain transaction submitted:", transactionResponse);
           console.log("🔗 Transaction hash:", transactionResponse.hash);
           
-          showSuccess(`Product minted successfully! TX: ${transactionResponse.hash.substring(0, 10)}... (Transferable: ${formData.transferable ? 'Yes' : 'No'})`);
+          showSuccess(
+            mintFeeMode === "lpt"
+              ? `Product minted with ${FIXED_PASSPORT_SERVICE_LPT_FEE} LPT charged! TX: ${transactionResponse.hash.substring(0, 10)}...`
+              : `Product minted after ${FIXED_PASSPORT_SERVICE_APT_FEE} APT service fee! TX: ${transactionResponse.hash.substring(0, 10)}...`
+          );
           
           // Reset form after successful creation and minting
           setFormData({
@@ -716,6 +820,7 @@ const IssuerDashboard = () => {
           console.log("🔄 Refreshing products list after successful minting...");
           setTimeout(() => {
             fetchProducts(true);
+            fetchLptBalance();
           }, 2000); // Wait 2 seconds for blockchain to process
           
         } catch (walletError) {
@@ -1142,6 +1247,45 @@ const IssuerDashboard = () => {
                           </Badge>
                         </div>
                       </div>
+
+                      <div className="space-y-3 rounded-lg border border-emerald-100 bg-emerald-50/60 p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <Label className="text-base font-semibold">Passport Mint Payment</Label>
+                            <p className="text-xs text-gray-600">
+                              LuxPass charges a fixed passport mint service fee. Choose APT or LPT.
+                            </p>
+                          </div>
+                          <Badge className="bg-white text-emerald-700 border border-emerald-200">
+                            {formatLptBalance()}
+                          </Badge>
+                        </div>
+
+                        <RadioGroup
+                          value={mintFeeMode}
+                          onValueChange={(value) => setMintFeeMode(value as PassportFeeMode)}
+                          className="grid gap-3 sm:grid-cols-2"
+                        >
+                          <Label className="flex cursor-pointer items-start gap-3 rounded-lg border bg-white p-3">
+                            <RadioGroupItem value="apt" className="mt-1" />
+                            <span>
+                              <span className="block font-semibold">Pay service fee with APT</span>
+                              <span className="block text-xs font-normal text-gray-600">
+                                Pays 0.05 APT service fee before the passport mint transaction.
+                              </span>
+                            </span>
+                          </Label>
+                          <Label className="flex cursor-pointer items-start gap-3 rounded-lg border bg-white p-3">
+                            <RadioGroupItem value="lpt" className="mt-1" />
+                            <span>
+                              <span className="block font-semibold">Pay platform fee with LPT</span>
+                              <span className="block text-xs font-normal text-gray-600">
+                                Uses mint_with_burn_lpt and charges 5 LPT.
+                              </span>
+                            </span>
+                          </Label>
+                        </RadioGroup>
+                      </div>
                     </div>
                   </div>
                   
@@ -1158,7 +1302,11 @@ const IssuerDashboard = () => {
                     </Button>
                     <Button 
                       onClick={handleCreateProduct}
-                      disabled={isCreating || !account}
+                      disabled={
+                        isCreating ||
+                        !account ||
+                        lptBalanceLoading
+                      }
                       className="bg-purple-600 hover:bg-purple-700"
                     >
                       <Zap className="mr-2 h-4 w-4" />

@@ -72,8 +72,17 @@ const FULLNODE_URL =
 const MODULE_ADDRESS = process.env.MODULE_ADDRESS!;
 const PASSPORT_INIT_PROBE_PRODUCT_ID = "__luxpass_passport_init_probe__";
 const PRODUCT_CACHE_TTL_MS = 60 * 1000;
-const LPT_TREASURY_ADDRESS = process.env.LPT_TREASURY_ADDRESS!;
+const LPT_TREASURY_ADDRESS =
+  process.env.LPT_TREASURY_ADDRESS ||
+  process.env.LPT_APT_TREASURY_ADDRESS ||
+  LPT_STATE_ADDRESS ||
+  REGISTRY_ADDRESS;
 const OCTAS_PER_APT = 100_000_000;
+const FIXED_PASSPORT_SERVICE_LPT_FEE = "5";
+const FIXED_PASSPORT_SERVICE_LPT_BURN_FEE = "4";
+const FIXED_PASSPORT_SERVICE_LPT_TREASURY_FEE = "1";
+const FIXED_PASSPORT_SERVICE_APT_FEE_OCTAS = "5000000";
+const FIXED_PASSPORT_SERVICE_APT_FEE = "0.05";
 
 type MintedEventRecord = {
   version?: string;
@@ -305,6 +314,16 @@ function buildMintWithBurnLptPayload(params: {
       treasuryAddress,
       gasFeeAmount,
     ],
+  };
+}
+
+function buildAptServiceFeePayload(treasuryAddress: string): {
+  function: string;
+  functionArguments: string[];
+} {
+  return {
+    function: "0x1::aptos_account::transfer",
+    functionArguments: [treasuryAddress, FIXED_PASSPORT_SERVICE_APT_FEE_OCTAS],
   };
 }
 
@@ -618,8 +637,7 @@ export const passportService = {
 
     const normalizedOwnerAddress = normalizeAddress(body.ownerAddress);
     const normalizedRegistryAddress = normalizeAddress(REGISTRY_ADDRESS);
-    const normalizedLptStateAddress = normalizeAddress(LPT_STATE_ADDRESS);
-    const burnAmount = parseBurnAmount(body.burnAmount);
+    const normalizedTreasuryAddress = normalizeAddress(LPT_TREASURY_ADDRESS);
     const serialPlainBytes = Array.from(Buffer.from(serialNumber, "utf8"));
     const transferable = parseTransferable(body.transferable);
 
@@ -643,15 +661,13 @@ export const passportService = {
     const metadataJson = JSON.stringify(metadata, null, 2);
     const metadataBytes = Array.from(Buffer.from(metadataJson, "utf8"));
 
-    const payload = buildMintWithBurnPayload({
+    const payload = buildMintPayload({
       registryAddress: normalizedRegistryAddress,
       ownerAddress: normalizedOwnerAddress,
       metadataIpfsUri: metadataUpload.ipfsUri,
       serialPlainBytes,
       metadataBytes,
       transferable,
-      lptStateAddress: normalizedLptStateAddress,
-      burnAmount,
     });
 
     return {
@@ -662,6 +678,10 @@ export const passportService = {
       metadataIpfsUri: metadataUpload.ipfsUri,
       metadata,
       payload,
+      feePayload: buildAptServiceFeePayload(normalizedTreasuryAddress),
+      feeAmountOctas: FIXED_PASSPORT_SERVICE_APT_FEE_OCTAS,
+      feeAmountApt: FIXED_PASSPORT_SERVICE_APT_FEE,
+      feeCurrency: "APT",
     };
   },
 
@@ -695,12 +715,11 @@ export const passportService = {
       throw new Error("At least one material is required.");
     }
 
-    const normalizedIssuerAddress = normalizeAddress(issuerWalletAddress);
     const normalizedOwnerAddress = normalizeAddress(body.ownerAddress);
     const normalizedRegistryAddress = normalizeAddress(REGISTRY_ADDRESS);
     const normalizedLptStateAddress = normalizeAddress(LPT_STATE_ADDRESS);
     const normalizedTreasuryAddress = normalizeAddress(LPT_TREASURY_ADDRESS);
-    const burnAmount = parseBurnAmount(body.burnAmount);
+    const burnAmount = FIXED_PASSPORT_SERVICE_LPT_BURN_FEE;
     const serialPlainBytes = Array.from(Buffer.from(serialNumber, "utf8"));
     const transferable = parseTransferable(body.transferable);
 
@@ -724,25 +743,6 @@ export const passportService = {
     const metadataJson = JSON.stringify(metadata, null, 2);
     const metadataBytes = Array.from(Buffer.from(metadataJson, "utf8"));
 
-    const draftPayload = buildMintWithBurnLptPayload({
-      registryAddress: normalizedRegistryAddress,
-      ownerAddress: normalizedOwnerAddress,
-      metadataIpfsUri: metadataUpload.ipfsUri,
-      serialPlainBytes,
-      metadataBytes,
-      transferable,
-      lptStateAddress: normalizedLptStateAddress,
-      burnAmount,
-      treasuryAddress: normalizedTreasuryAddress,
-      gasFeeAmount: "1",
-    });
-
-    const gasFeeAmount = await estimateGasFeeLpt(
-      normalizedIssuerAddress,
-      draftPayload.function,
-      draftPayload.functionArguments
-    );
-
     const payload = buildMintWithBurnLptPayload({
       registryAddress: normalizedRegistryAddress,
       ownerAddress: normalizedOwnerAddress,
@@ -753,7 +753,7 @@ export const passportService = {
       lptStateAddress: normalizedLptStateAddress,
       burnAmount,
       treasuryAddress: normalizedTreasuryAddress,
-      gasFeeAmount,
+      gasFeeAmount: FIXED_PASSPORT_SERVICE_LPT_TREASURY_FEE,
     });
 
     return {
@@ -764,6 +764,8 @@ export const passportService = {
       metadataIpfsUri: metadataUpload.ipfsUri,
       metadata,
       payload,
+      feeAmountLpt: FIXED_PASSPORT_SERVICE_LPT_FEE,
+      feeCurrency: "LPT",
     };
   },
 
@@ -876,8 +878,7 @@ export const passportService = {
     const normalizedNewOwner = normalizeAddress(body.newOwnerAddress);
     const normalizedCaller = normalizeAddress(callerWalletAddress);
     const normalizedRegistry = normalizeAddress(REGISTRY_ADDRESS);
-    const normalizedLptStateAddress = normalizeAddress(LPT_STATE_ADDRESS);
-    const burnAmount = parseBurnAmount(body.burnAmount);
+    const normalizedTreasuryAddress = normalizeAddress(LPT_TREASURY_ADDRESS);
 
     let passport: Awaited<ReturnType<typeof getPassport>>;
     try {
@@ -899,15 +900,20 @@ export const passportService = {
       return { success: false, error: "You are not the owner of this passport." };
     }
 
-    const payload = buildTransferWithBurnPayload({
+    const payload = buildTransferPayload({
       passportObjectAddress: normalizedPassportAddr,
       newOwnerAddress: normalizedNewOwner,
       registryAddress: normalizedRegistry,
-      lptStateAddress: normalizedLptStateAddress,
-      burnAmount,
     });
 
-    return { success: true, payload };
+    return {
+      success: true,
+      payload,
+      feePayload: buildAptServiceFeePayload(normalizedTreasuryAddress),
+      feeAmountOctas: FIXED_PASSPORT_SERVICE_APT_FEE_OCTAS,
+      feeAmountApt: FIXED_PASSPORT_SERVICE_APT_FEE,
+      feeCurrency: "APT",
+    };
   },
 
   async prepareTransferPassportWithBurnLpt(params: {
@@ -925,7 +931,7 @@ export const passportService = {
     const normalizedRegistry = normalizeAddress(REGISTRY_ADDRESS);
     const normalizedLptStateAddress = normalizeAddress(LPT_STATE_ADDRESS);
     const normalizedTreasuryAddress = normalizeAddress(LPT_TREASURY_ADDRESS);
-    const burnAmount = parseBurnAmount(body.burnAmount);
+    const burnAmount = FIXED_PASSPORT_SERVICE_LPT_BURN_FEE;
 
     let passport: Awaited<ReturnType<typeof getPassport>>;
     try {
@@ -947,22 +953,6 @@ export const passportService = {
       return { success: false, error: "You are not the owner of this passport." };
     }
 
-    const draftPayload = buildTransferWithBurnLptPayload({
-      passportObjectAddress: normalizedPassportAddr,
-      newOwnerAddress: normalizedNewOwner,
-      registryAddress: normalizedRegistry,
-      lptStateAddress: normalizedLptStateAddress,
-      burnAmount,
-      treasuryAddress: normalizedTreasuryAddress,
-      gasFeeAmount: "1",
-    });
-
-    const gasFeeAmount = await estimateGasFeeLpt(
-      normalizedCaller,
-      draftPayload.function,
-      draftPayload.functionArguments
-    );
-
     const payload = buildTransferWithBurnLptPayload({
       passportObjectAddress: normalizedPassportAddr,
       newOwnerAddress: normalizedNewOwner,
@@ -970,10 +960,15 @@ export const passportService = {
       lptStateAddress: normalizedLptStateAddress,
       burnAmount,
       treasuryAddress: normalizedTreasuryAddress,
-      gasFeeAmount,
+      gasFeeAmount: FIXED_PASSPORT_SERVICE_LPT_TREASURY_FEE,
     });
 
-    return { success: true, payload };
+    return {
+      success: true,
+      payload,
+      feeAmountLpt: FIXED_PASSPORT_SERVICE_LPT_FEE,
+      feeCurrency: "LPT",
+    };
   },
 
   async recordTransferPassport(params: {

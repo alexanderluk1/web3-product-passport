@@ -14,7 +14,7 @@ export type PrepareMintPassportRequestBody = {
 }
 
 export type PrepareMintWithBurnPassportRequestBody = PrepareMintPassportRequestBody & {
-  burnAmount: number | string;
+  burnAmount?: number | string;
 };
 
 export type PrepareMintWithBurnLptPassportRequestBody = PrepareMintWithBurnPassportRequestBody;
@@ -42,6 +42,11 @@ export type PreparedMintPayload = {
     functionArguments: Array<string | boolean | number[]>;
 }
 
+export type PreparedAptFeePayload = {
+    function: string;
+    functionArguments: string[];
+}
+
 export type PrepareMintPassportResponse = 
     | {
         success: true;
@@ -51,6 +56,11 @@ export type PrepareMintPassportResponse =
         metadataIpfsUri: string;
         metadata: PassportMetadata;
         payload: PreparedMintPayload;
+        feePayload?: PreparedAptFeePayload;
+        feeAmountOctas?: string;
+        feeAmountApt?: string;
+        feeAmountLpt?: string;
+        feeCurrency?: "APT" | "LPT";
     }
     | {
         success: false;
@@ -63,7 +73,7 @@ export type PrepareTransferRequestBody = {
 };
 
 export type PrepareTransferWithBurnRequestBody = PrepareTransferRequestBody & {
-  burnAmount: number | string;
+  burnAmount?: number | string;
 };
 
 export type PrepareTransferWithBurnLptRequestBody = PrepareTransferWithBurnRequestBody;
@@ -77,6 +87,11 @@ export type PrepareTransferResponse =
   | {
       success: true;
       payload: PreparedTransferPayload;
+      feePayload?: PreparedAptFeePayload;
+      feeAmountOctas?: string;
+      feeAmountApt?: string;
+      feeAmountLpt?: string;
+      feeCurrency?: "APT" | "LPT";
     }
   | {
       success: false;

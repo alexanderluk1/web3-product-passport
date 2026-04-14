@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Shield,
   Package,
@@ -39,10 +40,13 @@ import { showSuccess, showError } from "@/utils/toast";
 import { fetchListingsByStatusMap } from "@/utils/listings";
 import { octasToApt, aptToOctas, getAptUsdPrice, formatUsd } from "@/utils/price";
 import { LptPanel } from "@/components/LptPanel";
-import { PassportServicePayment } from "@/components/PassportServicePayment";
 
 const PINATA_GATEWAY_URL = "https://amaranth-passive-chicken-549.mypinata.cloud";
 const BASE_URL = "http://localhost:3001";
+const FIXED_PASSPORT_SERVICE_LPT_FEE = "5";
+const FIXED_PASSPORT_SERVICE_APT_FEE = "0.05";
+
+type PassportFeeMode = "apt" | "lpt";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -132,7 +136,7 @@ const formatDate = (ts: string | number) =>
 
 const UserDashboard = () => {
   const { user, accessToken } = useAuth();
-  const { signAndSubmitTransaction } = useWallet();
+  const { account, signAndSubmitTransaction } = useWallet();
 
   // Passport state
   const [ownedPassports, setOwnedPassports]     = useState<EnrichedProduct[]>([]);
@@ -145,6 +149,9 @@ const UserDashboard = () => {
   const [transferAddress, setTransferAddress]   = useState("");
   const [isTransferring, setIsTransferring]     = useState(false);
   const [isModalOpen, setIsModalOpen]           = useState(false);
+  const [lptBalance, setLptBalance]             = useState("0");
+  const [lptBalanceLoading, setLptBalanceLoading] = useState(false);
+  const [transferFeeMode, setTransferFeeMode]   = useState<PassportFeeMode>("apt");
 
   // Marketplace – list state
   const [listPassportAddr, setListPassportAddr] = useState("");
@@ -175,9 +182,10 @@ const UserDashboard = () => {
     if (user && accessToken) {
       fetchOwnedPassports();
       fetchMyListings();
+      fetchLptBalance();
     }
     getAptUsdPrice().then(setAptUsdRate);
-  }, [user, accessToken]);
+  }, [user, accessToken, account]);
 
   // ── IPFS helpers ────────────────────────────────────────────────────────────
 
@@ -251,6 +259,60 @@ const UserDashboard = () => {
 
   const validateWalletAddress = (addr: string) => /^0x[a-fA-F0-9]{1,64}$/.test(addr);
 
+  const getAddressString = (walletAccount: any) => {
+    if (!walletAccount) return "";
+    if (typeof walletAccount.address === "string") return walletAccount.address;
+    if (walletAccount.address && typeof walletAccount.address.toString === "function") {
+      return walletAccount.address.toString();
+    }
+    return "";
+  };
+
+  const getActiveWalletAddress = () => getAddressString(account) || user?.walletAddress;
+
+  const formatLptBalance = () => {
+    if (lptBalanceLoading) return "Loading...";
+    return `${lptBalance} LPT`;
+  };
+
+  const fetchLptBalance = async () => {
+    if (!accessToken) {
+      setLptBalance("0");
+      return;
+    }
+
+    const walletAddress = getActiveWalletAddress();
+    if (!walletAddress) {
+      setLptBalance("0");
+      return;
+    }
+
+    setLptBalanceLoading(true);
+
+    try {
+      const response = await fetch(
+        `${BASE_URL}/api/tokens/balance/${encodeURIComponent(walletAddress)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.error || data?.message || "Failed to load LPT balance.");
+      }
+
+      setLptBalance(String(data.balance ?? "0"));
+    } catch (error) {
+      console.error("Failed to fetch user LPT balance:", error);
+      setLptBalance("0");
+    } finally {
+      setLptBalanceLoading(false);
+    }
+  };
+
   // ── TRANSFER ─────────────────────────────────────────────────────────────────
 
   const handleTransfer = async (passport: EnrichedProduct) => {
@@ -258,21 +320,60 @@ const UserDashboard = () => {
       showError("Please enter a valid wallet address (0x...)");
       return;
     }
+
+    const connectedWalletAddress = getAddressString(account).toLowerCase();
+    const authenticatedWalletAddress = user?.walletAddress?.toLowerCase();
+    if (!connectedWalletAddress) {
+      showError("Please connect your wallet before transferring a passport.");
+      return;
+    }
+    if (authenticatedWalletAddress && connectedWalletAddress !== authenticatedWalletAddress) {
+      showError("Connected wallet must match the wallet you logged in with.");
+      return;
+    }
+
+    if (transferFeeMode === "lpt") {
+      const currentBalance = BigInt(/^\d+$/.test(lptBalance) ? lptBalance : "0");
+      if (BigInt(FIXED_PASSPORT_SERVICE_LPT_FEE) > currentBalance) {
+        showError(`You need ${FIXED_PASSPORT_SERVICE_LPT_FEE} LPT for this passport transfer.`);
+        return;
+      }
+    }
+
     const passportObjectAddress = passport.passportObjectAddr || passport.transactionHash;
     setIsTransferring(true);
     try {
-      const prepRes = await fetch(`${BASE_URL}/api/passports/transfer/prepare`, {
+      const transferEndpoint =
+        transferFeeMode === "lpt"
+          ? "/api/passports/transfer-with-burn-lpt/prepare"
+          : "/api/passports/transfer-with-burn/prepare";
+      const prepRes = await fetch(`${BASE_URL}${transferEndpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ passportObjectAddress, newOwnerAddress: transferAddress }),
+        body: JSON.stringify({
+          passportObjectAddress,
+          newOwnerAddress: transferAddress,
+        }),
       });
       if (!prepRes.ok) throw new Error("prepare");
       const prepData = await prepRes.json();
       if (!prepData.success || !prepData.payload) throw new Error("Invalid prepare response");
 
+      if (transferFeeMode === "apt" && prepData.feePayload) {
+        showSuccess(`Paying ${prepData.feeAmountApt ?? FIXED_PASSPORT_SERVICE_APT_FEE} APT service fee...`);
+        const feeTx = await signAndSubmitTransaction({
+          data: {
+            function: prepData.feePayload.function,
+            functionArguments: prepData.feePayload.functionArguments,
+          },
+          options: { maxGasAmount: 200000, gasUnitPrice: 100, expirationSecondsFromNow: 60 },
+        });
+        console.log("APT service fee transaction submitted:", feeTx);
+      }
+
       const txRes = await signAndSubmitTransaction({
         data: { function: prepData.payload.function, functionArguments: prepData.payload.functionArguments },
-        options: { maxGasAmount: 10000, gasUnitPrice: 100, expirationSecondsFromNow: 60 },
+        options: { maxGasAmount: 200000, gasUnitPrice: 100, expirationSecondsFromNow: 60 },
       });
 
       const recRes = await fetch(`${BASE_URL}/api/passports/transfer/record`, {
@@ -280,12 +381,21 @@ const UserDashboard = () => {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ txHash: txRes.hash, passportObjectAddress, newOwnerAddress: transferAddress }),
       });
-      if (recRes.ok) showSuccess(`Transferred! TX: ${txRes.hash.substring(0, 10)}...`);
+      if (recRes.ok) {
+        showSuccess(
+          transferFeeMode === "lpt"
+            ? `Transferred with ${FIXED_PASSPORT_SERVICE_LPT_FEE} LPT charged! TX: ${txRes.hash.substring(0, 10)}...`
+            : `Transferred after ${FIXED_PASSPORT_SERVICE_APT_FEE} APT service fee! TX: ${txRes.hash.substring(0, 10)}...`
+        );
+      }
       else showError("Transferred on-chain but failed to record in backend");
 
       setTransferAddress("");
       setSelectedPassport(null);
-      setTimeout(() => fetchOwnedPassports(true), 2000);
+      setTimeout(() => {
+        fetchOwnedPassports(true);
+        fetchLptBalance();
+      }, 2000);
     } catch (err: any) {
       if (err.message?.includes("rejected")) showError("Transfer cancelled");
       else if (err.message === "prepare") showError("Failed to prepare transfer");
@@ -618,10 +728,53 @@ const UserDashboard = () => {
                               {transferAddress && !validateWalletAddress(transferAddress) && (
                                 <p className="text-sm text-red-600 mb-2">Please enter a valid 0x... address</p>
                               )}
+                              <div className="mb-3 rounded-lg border border-emerald-100 bg-emerald-50/60 p-3">
+                                <div className="mb-3 flex items-center justify-between gap-3">
+                                  <div>
+                                    <p className="font-semibold">Transfer Payment</p>
+                                    <p className="text-xs text-gray-600">
+                                      LuxPass charges a fixed passport transfer service fee. Choose APT or LPT.
+                                    </p>
+                                  </div>
+                                  <Badge className="bg-white text-emerald-700 border border-emerald-200">
+                                    {formatLptBalance()}
+                                  </Badge>
+                                </div>
+
+                                <RadioGroup
+                                  value={transferFeeMode}
+                                  onValueChange={(value) => setTransferFeeMode(value as PassportFeeMode)}
+                                  className="grid gap-3 sm:grid-cols-2"
+                                >
+                                  <Label className="flex cursor-pointer items-start gap-3 rounded-lg border bg-white p-3">
+                                    <RadioGroupItem value="apt" className="mt-1" />
+                                    <span>
+                                      <span className="block font-semibold">Pay service fee with APT</span>
+                                      <span className="block text-xs font-normal text-gray-600">
+                                        Pays 0.05 APT service fee before the passport transfer transaction.
+                                      </span>
+                                    </span>
+                                  </Label>
+                                  <Label className="flex cursor-pointer items-start gap-3 rounded-lg border bg-white p-3">
+                                    <RadioGroupItem value="lpt" className="mt-1" />
+                                    <span>
+                                      <span className="block font-semibold">Pay platform fee with LPT</span>
+                                      <span className="block text-xs font-normal text-gray-600">
+                                        Uses trf_with_burn_lpt and charges 5 LPT.
+                                      </span>
+                                    </span>
+                                  </Label>
+                                </RadioGroup>
+                              </div>
                               <div className="flex space-x-2">
                                 <Button
                                   onClick={() => handleTransfer(passport)}
-                                  disabled={isTransferring || !transferAddress || !validateWalletAddress(transferAddress)}
+                                  disabled={
+                                    isTransferring ||
+                                    lptBalanceLoading ||
+                                    !transferAddress ||
+                                    !validateWalletAddress(transferAddress)
+                                  }
                                   className="bg-blue-600 hover:bg-blue-700"
                                 >
                                   {isTransferring ? "Transferring..." : "Transfer"}
