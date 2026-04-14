@@ -978,35 +978,16 @@ export const passportService = {
 
     const validation = await validateRecordedTransaction(
       body.txHash,
-      PASSPORT_TRANSFER_FN,
+      [
+        PASSPORT_TRANSFER_FN,
+        PASSPORT_TRANSFER_WITH_BURN_FN,
+        PASSPORT_TRANSFER_WITH_BURN_LPT_FN,
+      ],
       "Transaction is not a transfer transaction."
     );
 
-    if (!response.ok) {
-      return { success: false, error: "Transaction not found on chain." };
-    }
-
-    const tx = (await response.json()) as {
-      type: string;
-      success: boolean;
-      payload?: { function?: string };
-    };
-
-    if (tx.type !== "user_transaction") {
-      return { success: false, error: "Transaction is not a user transaction." };
-    }
-
-    if (!tx.success) {
-      return { success: false, error: "Transaction did not succeed on chain." };
-    }
-
-    const fnName = tx.payload?.function?.toLowerCase() ?? "";
-    const isSupportedTransfer =
-      fnName === PASSPORT_TRANSFER_FN.toLowerCase() ||
-      fnName === PASSPORT_TRANSFER_WITH_BURN_FN.toLowerCase() ||
-      fnName === PASSPORT_TRANSFER_WITH_BURN_LPT_FN.toLowerCase();
-    if (!isSupportedTransfer) {
-      return { success: false, error: "Transaction is not a transfer transaction." };
+    if (!validation.success) {
+      return validation;
     }
 
     // Invalidate issuer product cache (best-effort)

@@ -395,6 +395,7 @@ const UserDashboard = () => {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ txHash: txRes.hash, passportObjectAddress, newOwnerAddress: transferAddress }),
       });
+      const recData = await recRes.json().catch(() => ({}));
       if (recRes.ok) {
         showSuccess(
           transferFeeMode === "lpt"
@@ -402,7 +403,7 @@ const UserDashboard = () => {
             : `Transferred after ${FIXED_PASSPORT_SERVICE_APT_FEE} APT service fee! TX: ${txRes.hash.substring(0, 10)}...`
         );
       }
-      else showError("Transferred on-chain but failed to record in backend");
+      else showError(recData?.error || "Transferred on-chain but failed to record in backend");
 
       setTransferAddress("");
       setSelectedPassport(null);

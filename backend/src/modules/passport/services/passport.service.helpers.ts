@@ -349,7 +349,7 @@ type TxValidationFail = { success: false; error: string };
 
 export async function validateRecordedTransaction(
   txHash: string,
-  expectedFn: string,
+  expectedFn: string | string[],
   mismatchErrorMessage?: string
 ): Promise<TxValidationOk | TxValidationFail> {
   if (!txHash || typeof txHash !== "string" || !txHash.startsWith("0x")) {
@@ -369,10 +369,14 @@ export async function validateRecordedTransaction(
     return { success: false, error: "Transaction did not succeed on chain." };
   }
   const fnName = tx.payload?.function?.toLowerCase() ?? "";
-  if (fnName !== expectedFn.toLowerCase()) {
+  const expectedFns = Array.isArray(expectedFn) ? expectedFn : [expectedFn];
+  const matchesExpectedFn = expectedFns.some(
+    (functionName) => fnName === functionName.toLowerCase()
+  );
+  if (!matchesExpectedFn) {
     return {
       success: false,
-      error: mismatchErrorMessage ?? `Transaction is not a ${expectedFn} transaction.`,
+      error: mismatchErrorMessage ?? `Transaction is not a ${expectedFns.join(" or ")} transaction.`,
     };
   }
   return { success: true, tx };
