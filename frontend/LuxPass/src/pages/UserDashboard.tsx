@@ -521,7 +521,7 @@ const UserDashboard = () => {
           </div>
 
           <Tabs defaultValue="owned" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-3 bg-white/80 backdrop-blur-sm">
+            <TabsList className="grid w-full grid-cols-4 bg-white/80 backdrop-blur-sm">
               <TabsTrigger value="owned" className="flex items-center">
                 <Package className="mr-2 h-4 w-4" />
                 My Passports ({ownedPassports.length})
@@ -647,7 +647,12 @@ const UserDashboard = () => {
               </Card>
             </TabsContent>
 
-            {/* ─── MARKETPLACE TAB ───────────────────────────────────────────────── */}
+            {/* LPT Wallet Tab */}
+            <TabsContent value="lpt">
+              <LptPanel />
+            </TabsContent>
+
+            {/* Marketplace Tab */}
             <TabsContent value="marketplace">
               <div className="space-y-6">
 
@@ -725,11 +730,6 @@ const UserDashboard = () => {
                     </div>
                   </CardContent>
                 </Card>
-
-                {/* LPT Wallet Tab */}
-                <TabsContent value="lpt">
-                  <LptPanel />
-                </TabsContent>
 
                 {/* ── My listings ── */}
                 <Card className="border-0 shadow-xl bg-white/80 backdrop-blur-sm">
