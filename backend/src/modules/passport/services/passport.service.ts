@@ -4,13 +4,10 @@ import {
   GetProductByIdResponse,
   GetIssuerProductsResponse,
   PassportProvenanceEvent,
-  PassportMetadata,
   PrepareMintPassportRequestBody,
   PrepareMintPassportResponse,
-  PreparedMintPayload,
   PrepareTransferRequestBody,
   PrepareTransferResponse,
-  PreparedTransferPayload,
   RecordTransferRequestBody,
   RecordTransferResponse,
   PrepareUpdateMetadataRequestBody,
@@ -18,7 +15,6 @@ import {
   PrepareSetStatusResponse,
   RecordSetStatusRequestBody,
   RecordSetStatusResponse,
-  PreparedUpdateMetadataPayload,
   PrepareUpdateMetadataResponse,
   RecordUpdateMetadataRequestBody,
   RecordUpdateMetadataResponse,
@@ -35,7 +31,6 @@ import {
   submitListingRequestResponse,
   UpdateNoPassportListingRequestBody,
   UpdateNoPassportListingResponse,
-  PreparedMintListPayload,
   PrepareMintListPassportResponse,
   PrepareMintListPassportRequestBody,
   RecordMintListRequestBody,
@@ -61,15 +56,11 @@ import {
 import { getIssuerMintedProducts } from "../../../chains/luxpass/readers/getIssuerMintedProducts";
 import { getOwnedPassports as getOwnedPassportsFromChain } from "../../../chains/luxpass/readers/getOwnedPassports";
 import {
-  REGISTRY_ADDRESS,
   PASSPORT_SET_STATUS_FN,
   PASSPORT_UPDATE_METADATA_FN,
   PASSPORT_LIST_FN,
   PASSPORT_TRANSFER_FN,
   PASSPORT_DELIST_FN,
-  STATUS_ACTIVE,
-  STATUS_SUSPENDED,
-  STATUS_REVOKED,
   STATUS_STORING,
   STATUS_VERIFYING,
   STATUS_LISTING,
@@ -77,7 +68,6 @@ import {
   PASSPORT_MINTLIST_FN,
   PASSPORT_MINTLIST_EV,
 } from "../../../chains/luxpass/constants";
-import { initRegistry as writeInitRegistry } from "../../../chains/luxpass/writers/initRegistry";
 import { buildSetPassportStatusPayload } from "../../../chains/luxpass/writers/setPassportStatus";
 import { buildListPassportPayload } from "../../../chains/luxpass/writers/listPassport";
 import { buildDelistPassportPayload } from "../../../chains/luxpass/writers/delistPassport";
@@ -98,20 +88,34 @@ import {
   DelistRequestStatus,
   getListingRequest,
   updateListingRequestPassportAddress,
-  ListingRequest,
   getDelistRequestsByStatus,
   getListingRequestsByStatus,
 } from "../repository/listing_repository";
+import {
+  NORMALIZED_REGISTRY,
+  buildMintPayload,
+  buildTransferPayload,
+  buildUpdateMetadataPayload,
+  buildMintListPayload,
+  buildPassportMetadata,
+  decodeProductIdInput,
+  ensurePassportInfrastructureInitialized,
+  fetchTxMetaByVersion,
+  getEventVersion,
+  isCacheFresh,
+  isMarketPlaceStatus,
+  isValidStatus,
+  parseTransferable,
+  serializeMetadata,
+  toUtf8Hex,
+  validateRecordedTransaction,
+} from "./passport.service.helpers";
 
 const aptos = makeAptosClient();
 const FULLNODE_URL =
   process.env.APTOS_FULLNODE_URL || "https://fullnode.devnet.aptoslabs.com/v1";
 
 const MODULE_ADDRESS = process.env.MODULE_ADDRESS!;
-const PASSPORT_MODULE_NAME = "passport";
-const PASSPORT_MINT_FUNCTION = "mint";
-const PASSPORT_INIT_PROBE_PRODUCT_ID = "__luxpass_passport_init_probe__";
-const PRODUCT_CACHE_TTL_MS = 60 * 1000;
 
 type MintedEventRecord = {
   version?: string;
@@ -140,305 +144,12 @@ type TxMeta = {
   timestampMs?: number;
 };
 
-function hasMoveAbortCode(error: unknown, code: number): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-
-  const message = error.message.toLowerCase();
-  return (
-    message.includes(`abort code: ${code}`) ||
-    message.includes(`abort_code: ${code}`) ||
-    message.includes(`code ${code}`)
-  );
-}
-
-function isIndexNotInitializedError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-
-  const message = error.message.toLowerCase();
-  return message.includes("e_index_not_initialized") || hasMoveAbortCode(error, 3);
-}
-
-function isProductNotFoundError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-
-  const message = error.message.toLowerCase();
-  return message.includes("e_product_not_found") || hasMoveAbortCode(error, 21);
-}
-
-async function ensurePassportInfrastructureInitialized(): Promise<void> {
-  try {
-    await resolvePassportObjAddrByProductId(aptos, PASSPORT_INIT_PROBE_PRODUCT_ID);
-    return;
-  } catch (error) {
-    if (isProductNotFoundError(error)) {
-      // Passport index exists; probe ID does not.
-      return;
-    }
-
-    if (!isIndexNotInitializedError(error)) {
-      throw error;
-    }
-  }
-
-  const initResult = await writeInitRegistry(aptos);
-  if (!initResult.success) {
-    throw new Error(
-      `Failed to initialize passport infrastructure. ${initResult.vmStatus ?? ""}`.trim()
-    );
-  }
-}
-
-function buildPassportMetadata(params: {
-  productName: string;
-  brand: string;
-  category: string;
-  serialNumber: string;
-  manufacturingDate: string;
-  materials: string[];
-  countryOfOrigin: string;
-  description: string;
-  imageIpfsUri: string;
-}): PassportMetadata {
-  const {
-    productName,
-    brand,
-    category,
-    serialNumber,
-    manufacturingDate,
-    materials,
-    countryOfOrigin,
-    description,
-    imageIpfsUri,
-  } = params;
-
-  return {
-    name: productName,
-    description,
-    image: imageIpfsUri,
-    brand,
-    category,
-    serialNumber,
-    manufacturingDate,
-    materials,
-    countryOfOrigin,
-    attributes: [
-      { trait_type: "Brand", value: brand },
-      { trait_type: "Category", value: category },
-      { trait_type: "Serial Number", value: serialNumber },
-      { trait_type: "Manufacturing Date", value: manufacturingDate },
-      { trait_type: "Country of Origin", value: countryOfOrigin },
-      { trait_type: "Materials", value: materials.join(", ") },
-    ],
-  };
-}
-
-function buildMintPayload(params: {
-  registryAddress: string;
-  ownerAddress: string;
-  serialPlainBytes: number[];
-  metadataIpfsUri: string;
-  metadataBytes: number[];
-  transferable: boolean;
-}): PreparedMintPayload {
-  const {
-    registryAddress,
-    ownerAddress,
-    serialPlainBytes,
-    metadataIpfsUri,
-    metadataBytes,
-    transferable,
-  } = params;
-
-  return {
-    function: `${MODULE_ADDRESS}::${PASSPORT_MODULE_NAME}::${PASSPORT_MINT_FUNCTION}`,
-    functionArguments: [
-      registryAddress,
-      ownerAddress,
-      serialPlainBytes,
-      metadataIpfsUri,
-      metadataBytes,
-      transferable,
-    ],
-  };
-}
-
-function buildTransferPayload(params: {
-  passportObjectAddress: string;
-  newOwnerAddress: string;
-  registryAddress: string;
-}): PreparedTransferPayload {
-  return {
-    function: PASSPORT_TRANSFER_FN,
-    functionArguments: [
-      params.passportObjectAddress,
-      params.newOwnerAddress,
-      params.registryAddress,
-    ],
-  };
-}
-
-export function buildUpdateMetadataPayload(params: {
-  passportObjectAddress: string;
-  registryAddress: string;
-  metadataIpfsUri: string;
-  metadataBytes: number[];
-}): PreparedUpdateMetadataPayload {
-  return {
-    function: PASSPORT_UPDATE_METADATA_FN,
-    functionArguments: [
-      params.passportObjectAddress,
-      params.registryAddress,
-      params.metadataIpfsUri,
-      params.metadataBytes,
-    ],
-  };
-}
-
-export function buildMintListPayload(params: {
-  registryAddress: string;
-  ownerAddress: string;
-  serialPlainBytes: number[];
-  metadataIpfsUri: string;
-  metadataBytes: number[];
-  placeholderAddress: string;
-}): PreparedMintListPayload {
-  return {
-    function: PASSPORT_MINTLIST_FN,
-    functionArguments: [
-      params.registryAddress,
-      params.ownerAddress,
-      params.serialPlainBytes,
-      params.metadataIpfsUri,
-      params.metadataBytes,
-      params.placeholderAddress,
-    ],
-  };
-}
-
-function isValidStatus(status: number): boolean {
-  return [STATUS_ACTIVE, STATUS_SUSPENDED, STATUS_REVOKED, STATUS_STORING, STATUS_VERIFYING, STATUS_LISTING, STATUS_RETURNING].includes(status);
-}
-
-function isMarketPlaceStatus(status: number): boolean{
-  return [STATUS_STORING,STATUS_LISTING,STATUS_VERIFYING,STATUS_RETURNING].includes(status)
-}
-
-function isCacheFresh(syncedAt: number): boolean {
-  return Date.now() - syncedAt < PRODUCT_CACHE_TTL_MS;
-}
-
-interface AptosEvent {
-  guid: {
-    creation_number: string;
-    account_address: string;
-  };
-  sequence_number: string;
-  type: string;
-  data: Record<string, any>; 
-}
-
 const listingStatusMap: Record<number, ListingRequestStatus> = {
   [STATUS_STORING]: "pending",
   [STATUS_VERIFYING]: "verifying",
   [STATUS_LISTING]: "listed",
   [STATUS_RETURNING]: "returning",
 };
-
-function parseTransferable(value: unknown): boolean {
-  if (typeof value === "boolean") {
-    return value;
-  }
-
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    if (normalized === "false" || normalized === "0" || normalized === "no") {
-      return false;
-    }
-    if (normalized === "true" || normalized === "1" || normalized === "yes") {
-      return true;
-    }
-  }
-
-  // Default behavior: transferable by default when omitted/invalid.
-  return true;
-}
-
-function toEpochMs(timestamp?: string): number | undefined {
-  if (!timestamp) {
-    return undefined;
-  }
-
-  const numeric = Number(timestamp);
-  if (!Number.isFinite(numeric)) {
-    return undefined;
-  }
-
-  if (numeric >= 1e18) {
-    return Math.floor(numeric / 1_000_000);
-  }
-  if (numeric >= 1e15) {
-    return Math.floor(numeric / 1_000);
-  }
-  if (numeric < 1e12) {
-    return Math.floor(numeric * 1_000);
-  }
-
-  return Math.floor(numeric);
-}
-
-function getEventVersion(event: { version?: string; transaction_version?: string }): string {
-  return String(event.version ?? event.transaction_version ?? "").trim();
-}
-
-async function fetchTxMetaByVersion(version: string): Promise<TxMeta> {
-  const response = await fetch(`${FULLNODE_URL}/transactions/by_version/${version}`);
-
-  if (!response.ok) {
-    return {};
-  }
-
-  const tx = (await response.json()) as {
-    hash?: string;
-    sender?: string;
-    timestamp?: string;
-  };
-
-  return {
-    hash: tx.hash,
-    sender: tx.sender,
-    timestampMs: toEpochMs(tx.timestamp),
-  };
-}
-
-function decodeProductIdInput(productId: string): string {
-  const normalized = validateRequiredString(productId, "productId");
-
-  if (/^0x[0-9a-fA-F]+$/.test(normalized) && normalized.length > 2) {
-    const hex = normalized.slice(2);
-    const padded = hex.length % 2 === 0 ? hex : `0${hex}`;
-
-    try {
-      const decoded = Buffer.from(padded, "hex").toString("utf8");
-      if (decoded.trim()) {
-        return decoded;
-      }
-    } catch {
-      // fall back to raw input
-    }
-  }
-
-  return normalized;
-}
-
-function toUtf8Hex(value: string): string {
-  return `0x${Buffer.from(value, "utf8").toString("hex")}`;
-}
 
 export const passportService = {
   async getPassport(passportObjectAddr: string) {
@@ -476,7 +187,6 @@ export const passportService = {
     }
 
     const normalizedOwnerAddress = normalizeAddress(body.ownerAddress);
-    const normalizedRegistryAddress = normalizeAddress(REGISTRY_ADDRESS);
     const serialPlainBytes = Array.from(Buffer.from(serialNumber, "utf8"));
     const transferable = parseTransferable(body.transferable);
 
@@ -499,11 +209,10 @@ export const passportService = {
 
     const metadataUpload = await uploadMetadataToPinata(metadata);
     // Keep hash bytes aligned with uploaded JSON payload formatting.
-    const metadataJson = JSON.stringify(metadata, null, 2);
-    const metadataBytes = Array.from(Buffer.from(metadataJson, "utf8"));
+    const metadataBytes = serializeMetadata(metadata);
 
     const payload = buildMintPayload({
-      registryAddress: normalizedRegistryAddress,
+      registryAddress: NORMALIZED_REGISTRY,
       ownerAddress: normalizedOwnerAddress,
       metadataIpfsUri: metadataUpload.ipfsUri,
       serialPlainBytes,
@@ -570,7 +279,6 @@ export const passportService = {
     const normalizedPassportAddr = normalizeAddress(body.passportObjectAddress);
     const normalizedNewOwner = normalizeAddress(body.newOwnerAddress);
     const normalizedCaller = normalizeAddress(callerWalletAddress);
-    const normalizedRegistry = normalizeAddress(REGISTRY_ADDRESS);
 
     let passport: Awaited<ReturnType<typeof getPassport>>;
     try {
@@ -595,7 +303,7 @@ export const passportService = {
     const payload = buildTransferPayload({
       passportObjectAddress: normalizedPassportAddr,
       newOwnerAddress: normalizedNewOwner,
-      registryAddress: normalizedRegistry,
+      registryAddress: NORMALIZED_REGISTRY,
     });
 
     return { success: true, payload };
@@ -606,36 +314,12 @@ export const passportService = {
   }): Promise<RecordTransferResponse> {
     const { body } = params;
 
-    if (!body.txHash || typeof body.txHash !== "string" || !body.txHash.startsWith("0x")) {
-      return { success: false, error: "Invalid transaction hash." };
-    }
-
-    const response = await fetch(
-      `${FULLNODE_URL}/transactions/by_hash/${body.txHash}`
+    const validation = await validateRecordedTransaction(
+      body.txHash,
+      PASSPORT_TRANSFER_FN,
+      "Transaction is not a transfer transaction."
     );
-
-    if (!response.ok) {
-      return { success: false, error: "Transaction not found on chain." };
-    }
-
-    const tx = (await response.json()) as {
-      type: string;
-      success: boolean;
-      payload?: { function?: string };
-    };
-
-    if (tx.type !== "user_transaction") {
-      return { success: false, error: "Transaction is not a user transaction." };
-    }
-
-    if (!tx.success) {
-      return { success: false, error: "Transaction did not succeed on chain." };
-    }
-
-    const fnName = tx.payload?.function?.toLowerCase() ?? "";
-    if (fnName !== PASSPORT_TRANSFER_FN.toLowerCase()) {
-      return { success: false, error: "Transaction is not a transfer transaction." };
-    }
+    if (!validation.success) return validation;
 
     // Invalidate issuer product cache (best-effort)
     try {
@@ -661,9 +345,7 @@ export const passportService = {
     );
 
     const mintedEventsResponse = await fetch(
-      `${FULLNODE_URL}/accounts/${normalizeAddress(
-        REGISTRY_ADDRESS
-      )}/events/${MODULE_ADDRESS}::passport::PassportEvents/minted?limit=1000`
+      `${FULLNODE_URL}/accounts/${NORMALIZED_REGISTRY}/events/${MODULE_ADDRESS}::passport::PassportEvents/minted?limit=1000`
     );
 
     if (!mintedEventsResponse.ok) {
@@ -679,9 +361,7 @@ export const passportService = {
     );
 
     const transferEventsResponse = await fetch(
-      `${FULLNODE_URL}/accounts/${normalizeAddress(
-        REGISTRY_ADDRESS
-      )}/events/${MODULE_ADDRESS}::passport::PassportEvents/transferred?limit=1000`
+      `${FULLNODE_URL}/accounts/${NORMALIZED_REGISTRY}/events/${MODULE_ADDRESS}::passport::PassportEvents/transferred?limit=1000`
     );
 
     let transferEvents: TransferEventRecord[] = [];
@@ -799,7 +479,7 @@ export const passportService = {
     const passportObjectAddr = await resolvePassportObjAddrByProductId(aptos, productIdPlain);
     const passport = await getPassport(aptos, passportObjectAddr);
     const issuerAddress = normalizeAddress(passport.issuer);
-    const registryAddress = normalizeAddress(REGISTRY_ADDRESS);
+    const registryAddress = NORMALIZED_REGISTRY;
 
     // Pull a larger history window when querying a specific product.
     const issuerProducts = await getIssuerMintedProducts(issuerAddress, 500);
@@ -891,10 +571,9 @@ export const passportListingService = {
       };
     }
 
-    const normalizedRegistry = normalizeAddress(REGISTRY_ADDRESS);
     const payload = buildSetPassportStatusPayload({
       passportObjectAddress: normalizedPassportAddr,
-      registryAddress: normalizedRegistry,
+      registryAddress: NORMALIZED_REGISTRY,
       newStatus: body.newStatus,
     });
 
@@ -907,40 +586,14 @@ export const passportListingService = {
   }): Promise<RecordSetStatusResponse> {
     const { body } = params;
 
-    if (!body.txHash || typeof body.txHash !== "string" || !body.txHash.startsWith("0x")) {
-      return { success: false, error: "Invalid transaction hash." };
-    }
-
     validateWalletAddress(body.passportObjectAddress, "passport object address");
 
-    const response = await fetch(`${FULLNODE_URL}/transactions/by_hash/${body.txHash}`);
-
-    if (!response.ok) {
-      return { success: false, error: "Transaction not found on chain." };
-    }
-
-    const tx = (await response.json()) as {
-      type: string;
-      success: boolean;
-      payload?: { function?: string };
-    };
-
-    if (!tx){
-      return { success: false, error: "Chain returned an empty block" };
-    }
-
-    if (tx.type !== "user_transaction") {
-      return { success: false, error: "Transaction is not a user transaction." };
-    }
-
-    if (!tx.success) {
-      return { success: false, error: "Transaction did not succeed on chain." };
-    }
-
-    const fnName = tx.payload?.function?.toLowerCase() ?? "";
-    if (fnName !== PASSPORT_SET_STATUS_FN.toLowerCase()) {
-      return { success: false, error: "Transaction is not a set_status transaction." };
-    }
+    const validation = await validateRecordedTransaction(
+      body.txHash,
+      PASSPORT_SET_STATUS_FN,
+      "Transaction is not a set_status transaction."
+    );
+    if (!validation.success) return validation;
 
     // Check if new status is marketplace status and if it is update listing request status in DB, if fails log and move on
     try {
@@ -1055,13 +708,11 @@ export const passportListingService = {
     };
 
     const metadataUpload = await uploadMetadataToPinata(metadata);
-    const metadataJson = JSON.stringify(metadata, null, 2);
-    const metadataBytes = Array.from(Buffer.from(metadataJson, "utf8"));
-    const normalizedRegistry = normalizeAddress(REGISTRY_ADDRESS);
+    const metadataBytes = serializeMetadata(metadata);
 
     const payload = buildUpdateMetadataPayload({
       passportObjectAddress: normalizedPassportAddr,
-      registryAddress: normalizedRegistry,
+      registryAddress: NORMALIZED_REGISTRY,
       metadataIpfsUri: metadataUpload.ipfsUri,
       metadataBytes,
     });
@@ -1079,36 +730,14 @@ export const passportListingService = {
   }): Promise<RecordUpdateMetadataResponse> {
     const { body } = params;
 
-    if (!body.txHash || typeof body.txHash !== "string" || !body.txHash.startsWith("0x")) {
-      return { success: false, error: "Invalid transaction hash." };
-    }
-
     validateWalletAddress(body.passportObjectAddress, "passport object address");
 
-    const response = await fetch(`${FULLNODE_URL}/transactions/by_hash/${body.txHash}`);
-
-    if (!response.ok) {
-      return { success: false, error: "Transaction not found on chain." };
-    }
-
-    const tx = (await response.json()) as {
-      type: string;
-      success: boolean;
-      payload?: { function?: string };
-    };
-
-    if (tx.type !== "user_transaction") {
-      return { success: false, error: "Transaction is not a user transaction." };
-    }
-
-    if (!tx.success) {
-      return { success: false, error: "Transaction did not succeed on chain." };
-    }
-
-    const fnName = tx.payload?.function?.toLowerCase() ?? "";
-    if (fnName !== PASSPORT_UPDATE_METADATA_FN.toLowerCase()) {
-      return { success: false, error: "Transaction is not an update_metadata transaction." };
-    }
+    const validation = await validateRecordedTransaction(
+      body.txHash,
+      PASSPORT_UPDATE_METADATA_FN,
+      "Transaction is not an update_metadata transaction."
+    );
+    if (!validation.success) return validation;
 
     // Invalidate product cached to fetch latest metadata on next retrieval.
     try {
@@ -1151,10 +780,9 @@ export const passportListingService = {
       return { success: false, error: "You are not the owner of this passport." };
     }
 
-    const normalizedRegistry = normalizeAddress(REGISTRY_ADDRESS);
     const payload = buildListPassportPayload({
       passportObjectAddress: normalizedPassportAddr,
-      registryAddress: normalizedRegistry,
+      registryAddress: NORMALIZED_REGISTRY,
     });
 
     return { success: true, payload };
@@ -1166,36 +794,14 @@ export const passportListingService = {
   }): Promise<RecordListPassportResponse> {
     const { body } = params;
 
-    if (!body.txHash || typeof body.txHash !== "string" || !body.txHash.startsWith("0x")) {
-      return { success: false, error: "Invalid transaction hash." };
-    }
-
     validateWalletAddress(body.passportObjectAddress, "passport object address");
 
-    const response = await fetch(`${FULLNODE_URL}/transactions/by_hash/${body.txHash}`);
-
-    if (!response.ok) {
-      return { success: false, error: "Transaction not found on chain." };
-    }
-
-    const tx = (await response.json()) as {
-      type: string;
-      success: boolean;
-      payload?: { function?: string };
-    };
-
-    if (tx.type !== "user_transaction") {
-      return { success: false, error: "Transaction is not a user transaction." };
-    }
-
-    if (!tx.success) {
-      return { success: false, error: "Transaction did not succeed on chain." };
-    }
-
-    const fnName = tx.payload?.function?.toLowerCase() ?? "";
-    if (fnName !== PASSPORT_LIST_FN.toLowerCase()) {
-      return { success: false, error: "Transaction is not a list_passport transaction." };
-    }
+    const validation = await validateRecordedTransaction(
+      body.txHash,
+      PASSPORT_LIST_FN,
+      "Transaction is not a list_passport transaction."
+    );
+    if (!validation.success) return validation;
 
     const normalizedPassportAddr = normalizeAddress(body.passportObjectAddress);
     try {
@@ -1336,7 +942,6 @@ export const passportListingService = {
       }
 
       const normalizedOwnerAddress = normalizeAddress(owner_address);
-      const normalizedRegistryAddress = normalizeAddress(REGISTRY_ADDRESS);
       const serialPlainBytes = Array.from(Buffer.from(serialNumber, "utf8"));
 
       // Ensure one-time on-chain passport resources exist before mint payload is used.
@@ -1358,11 +963,10 @@ export const passportListingService = {
 
       const metadataUpload = await uploadMetadataToPinata(metadata);
       // Keep hash bytes aligned with uploaded JSON payload formatting.
-      const metadataJson = JSON.stringify(metadata, null, 2);
-      const metadataBytes = Array.from(Buffer.from(metadataJson, "utf8"));
+      const metadataBytes = serializeMetadata(metadata);
 
       const payload = buildMintListPayload({
-        registryAddress: normalizedRegistryAddress,
+        registryAddress: NORMALIZED_REGISTRY,
         ownerAddress: normalizedOwnerAddress,
         metadataIpfsUri: metadataUpload.ipfsUri,
         serialPlainBytes,
@@ -1393,39 +997,13 @@ export const passportListingService = {
   }): Promise<RecordMintListResponse> {
     const { body } = params;
 
-    if (!body.txHash || typeof body.txHash !== "string" || !body.txHash.startsWith("0x")) {
-      return { success: false, error: "Invalid transaction hash." };
-    }
-
-    const response = await fetch(`${FULLNODE_URL}/transactions/by_hash/${body.txHash}`);
-
-    if (!response.ok) {
-      return { success: false, error: "Transaction not found on chain." };
-    }
-
-    const tx = (await response.json()) as {
-      type: string;
-      success: boolean;
-      payload?: { function?: string };
-      events?: AptosEvent[];
-    };
-
-    if (!tx) {
-      return { success: false, error: "Empty response from blockchain node." };
-    }
-
-    if (tx.type !== "user_transaction") {
-      return { success: false, error: "Transaction is not a user transaction." };
-    }
-
-    if (!tx.success) {
-      return { success: false, error: "Transaction did not succeed on chain." };
-    }
-
-    const fnName = tx.payload?.function?.toLowerCase() ?? "";
-    if (fnName !== PASSPORT_MINTLIST_FN.toLowerCase()) {
-      return { success: false, error: "Transaction is not a mint_list passport transaction." };
-    }
+    const validation = await validateRecordedTransaction(
+      body.txHash,
+      PASSPORT_MINTLIST_FN,
+      "Transaction is not a mint_list passport transaction."
+    );
+    if (!validation.success) return validation;
+    const { tx } = validation;
 
     try {
       const passportEvent = tx.events?.find(e => e.type.includes(PASSPORT_MINTLIST_EV));
@@ -1541,8 +1119,6 @@ export const passportListingService = {
 
     const normalizedPassportAddr = normalizeAddress(body.passportObjectAddress);
     const normalizedCaller = normalizeAddress(callerWalletAddress);
-    const registryAddress = normalizeAddress(REGISTRY_ADDRESS);
-
     let passport: Awaited<ReturnType<typeof getPassport>>;
     try {
       passport = await getPassport(aptos, normalizedPassportAddr);
@@ -1567,7 +1143,7 @@ export const passportListingService = {
 
     const payload = buildDelistPassportPayload({
       passportObjectAddress: normalizedPassportAddr,
-      registryAddress: registryAddress,
+      registryAddress: NORMALIZED_REGISTRY,
     });
 
     return { success: true, payload };
@@ -1579,36 +1155,14 @@ export const passportListingService = {
   }): Promise<RecordConfirmReceiptResponse> {
     const { body } = params;
 
-    if (!body.txHash || typeof body.txHash !== "string" || !body.txHash.startsWith("0x")) {
-      return { success: false, error: "Invalid transaction hash." };
-    }
-
     validateWalletAddress(body.passportObjectAddress, "passport object address");
 
-    const response = await fetch(`${FULLNODE_URL}/transactions/by_hash/${body.txHash}`);
-
-    if (!response.ok) {
-      return { success: false, error: "Transaction not found on chain." };
-    }
-
-    const tx = (await response.json()) as {
-      type: string;
-      success: boolean;
-      payload?: { function?: string };
-    };
-
-    if (tx.type !== "user_transaction") {
-      return { success: false, error: "Transaction is not a user transaction." };
-    }
-
-    if (!tx.success) {
-      return { success: false, error: "Transaction did not succeed on chain." };
-    }
-
-    const fnName = tx.payload?.function?.toLowerCase() ?? "";
-    if (fnName !== PASSPORT_DELIST_FN.toLowerCase()) {
-      return { success: false, error: "Transaction is not a delist transaction." };
-    }
+    const validation = await validateRecordedTransaction(
+      body.txHash,
+      PASSPORT_DELIST_FN,
+      "Transaction is not a delist transaction."
+    );
+    if (!validation.success) return validation;
 
     // update database to close the delist request and set listing status to returned
     try {
@@ -1675,7 +1229,7 @@ export const passportListingService = {
       const payload = buildSetPassportStatusPayload(
         {
           passportObjectAddress: normalizedPassportAddr,
-          registryAddress: normalizeAddress(REGISTRY_ADDRESS),
+          registryAddress: NORMALIZED_REGISTRY,
           newStatus: STATUS_RETURNING,
         }
       )
