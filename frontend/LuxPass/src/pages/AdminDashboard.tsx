@@ -483,7 +483,7 @@ const AdminDashboard = () => {
           </div>
 
           <Tabs defaultValue="marketplace" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-3 bg-white/80 backdrop-blur-sm">
+            <TabsList className="grid w-full grid-cols-4 bg-white/80 backdrop-blur-sm">
               <TabsTrigger value="marketplace" className="flex items-center">
                 <Store className="mr-2 h-4 w-4" />
                 Marketplace
