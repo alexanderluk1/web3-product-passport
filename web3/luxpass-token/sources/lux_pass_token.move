@@ -207,12 +207,29 @@ module luxpass::lux_pass_token {
         do_transfer(s, from_addr, to, amount);
     }
 
-    public entry fun burn(account: &signer, state_addr: address, amount: u64) acquires LPTState {
+    /// Burn LPT from `issuer` and emit `PassportServiceBurn` (issuer-paid passport actions).
+    public fun passport_burn(issuer: &signer, state_addr: address, amount: u64) acquires LPTState {
         assert!(amount > 0, E_ZERO_AMOUNT);
         let s = borrow_global_mut<LPTState>(state_addr);
-        let addr = signer::address_of(account);
+        let a = signer::address_of(issuer);
+        burn_balance(s, a, amount);
+        event::emit_event(
+            &mut s.passport_burn_events,
+            PassportServiceBurn { issuer: a, amount },
+        );
+    }
+
+    /// Burn LPT from `owner` and emit `Burned` (e.g. owner-paid passport transfer fee).
+    public fun transfer_burn(owner: &signer, state_addr: address, amount: u64) acquires LPTState {
+        assert!(amount > 0, E_ZERO_AMOUNT);
+        let s = borrow_global_mut<LPTState>(state_addr);
+        let addr = signer::address_of(owner);
         burn_balance(s, addr, amount);
         event::emit_event(&mut s.burn_events, Burned { account: addr, amount });
+    }
+
+    public entry fun burn(account: &signer, state_addr: address, amount: u64) acquires LPTState {
+        transfer_burn(account, state_addr, amount);
     }
 
     // Supplemantery Supply ----------------------------------------------
@@ -295,14 +312,27 @@ module luxpass::lux_pass_token {
         treasury: address,
         amount: u64,
     ) acquires LPTState {
-        assert!(amount > 0, E_ZERO_AMOUNT);
-        let s = borrow_global_mut<LPTState>(state_addr);
-        let p = signer::address_of(payer);
-        transfer_balances(s, p, treasury, amount);
-        event::emit_event(
-            &mut s.fee_events,
-            PlatformFeePaid { payer: p, treasury, amount },
-        );
+        charge_platform_fee(payer, state_addr, treasury, amount);
+    }
+
+    /// Charge gas-equivalent LPT fee from issuer to treasury.
+    public fun passport_gas_fee(
+        issuer: &signer,
+        state_addr: address,
+        treasury: address,
+        amount: u64,
+    ) acquires LPTState {
+        charge_platform_fee(issuer, state_addr, treasury, amount);
+    }
+
+    /// Charge gas-equivalent LPT fee from owner to treasury.
+    public fun transfer_gas_fee(
+        owner: &signer,
+        state_addr: address,
+        treasury: address,
+        amount: u64,
+    ) acquires LPTState {
+        charge_platform_fee(owner, state_addr, treasury, amount);
     }
 
     public entry fun burn_for_passport_service(
@@ -310,14 +340,7 @@ module luxpass::lux_pass_token {
         state_addr: address,
         amount: u64,
     ) acquires LPTState {
-        assert!(amount > 0, E_ZERO_AMOUNT);
-        let s = borrow_global_mut<LPTState>(state_addr);
-        let a = signer::address_of(issuer);
-        burn_balance(s, a, amount);
-        event::emit_event(
-            &mut s.passport_burn_events,
-            PassportServiceBurn { issuer: a, amount },
-        );
+        passport_burn(issuer, state_addr, amount);
     }
 
     // MISC Action ----------------------------------------------
@@ -387,6 +410,22 @@ module luxpass::lux_pass_token {
         event::emit_event(
             &mut s.transfer_events,
             Transferred { from: from_addr, to, amount },
+        );
+    }
+
+    fun charge_platform_fee(
+        payer: &signer,
+        state_addr: address,
+        treasury: address,
+        amount: u64,
+    ) acquires LPTState {
+        assert!(amount > 0, E_ZERO_AMOUNT);
+        let s = borrow_global_mut<LPTState>(state_addr);
+        let p = signer::address_of(payer);
+        transfer_balances(s, p, treasury, amount);
+        event::emit_event(
+            &mut s.fee_events,
+            PlatformFeePaid { payer: p, treasury, amount },
         );
     }
 }

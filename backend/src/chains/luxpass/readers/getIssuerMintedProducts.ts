@@ -9,7 +9,14 @@ const MODULE_ADDRESS = (
   ""
 ).trim();
 const PASSPORT_MODULE_NAME = process.env.PASSPORT_MODULE_NAME || "passport";
-const MINT_FUNCTION_NAME = process.env.PASSPORT_MINT_FUNCTION || "mint";
+const MINT_FUNCTION_NAMES = (
+  process.env.PASSPORT_MINT_FUNCTIONS ||
+  process.env.PASSPORT_MINT_FUNCTION ||
+  "mint,mint_with_burn,mint_with_burn_lpt"
+)
+  .split(",")
+  .map((value) => value.trim().toLowerCase())
+  .filter(Boolean);
 
 function normalizeAddress(address: string): string {
   return address.trim().toLowerCase();
@@ -73,9 +80,10 @@ function isMintPayloadFunction(functionId?: string): boolean {
     return false;
   }
 
-  return (
-    functionId.toLowerCase() ===
-    `${MODULE_ADDRESS}::${PASSPORT_MODULE_NAME}::${MINT_FUNCTION_NAME}`.toLowerCase()
+  const normalized = functionId.toLowerCase();
+  return MINT_FUNCTION_NAMES.some(
+    (functionName) =>
+      normalized === `${MODULE_ADDRESS}::${PASSPORT_MODULE_NAME}::${functionName}`.toLowerCase()
   );
 }
 

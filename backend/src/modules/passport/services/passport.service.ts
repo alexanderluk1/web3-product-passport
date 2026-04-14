@@ -6,9 +6,13 @@ import {
   PassportProvenanceEvent,
   PassportMetadata,
   PrepareMintPassportRequestBody,
+  PrepareMintWithBurnPassportRequestBody,
+  PrepareMintWithBurnLptPassportRequestBody,
   PrepareMintPassportResponse,
   PreparedMintPayload,
   PrepareTransferRequestBody,
+  PrepareTransferWithBurnRequestBody,
+  PrepareTransferWithBurnLptRequestBody,
   PrepareTransferResponse,
   PreparedTransferPayload,
   RecordTransferRequestBody,
@@ -29,8 +33,17 @@ import {
 } from "../../../chains/luxpass/readers";
 import { getIssuerMintedProducts } from "../../../chains/luxpass/readers/getIssuerMintedProducts";
 import { getOwnedPassports as getOwnedPassportsFromChain } from "../../../chains/luxpass/readers/getOwnedPassports";
-import { REGISTRY_ADDRESS, PASSPORT_TRANSFER_FN } from "../../../chains/luxpass/constants";
+import {
+  REGISTRY_ADDRESS,
+  PASSPORT_MINT_FN,
+  PASSPORT_MINT_WITH_BURN_FN,
+  PASSPORT_MINT_WITH_BURN_LPT_FN,
+  PASSPORT_TRANSFER_FN,
+  PASSPORT_TRANSFER_WITH_BURN_FN,
+  PASSPORT_TRANSFER_WITH_BURN_LPT_FN,
+} from "../../../chains/luxpass/constants";
 import { initRegistry as writeInitRegistry } from "../../../chains/luxpass/writers/initRegistry";
+import { LPT_STATE_ADDRESS } from "../../../chains/luxpasstoken/constants";
 import {
   getIssuerProductsFromStore,
   saveIssuerProductsToStore,
@@ -42,10 +55,10 @@ const FULLNODE_URL =
   process.env.APTOS_FULLNODE_URL || "https://fullnode.devnet.aptoslabs.com/v1";
 
 const MODULE_ADDRESS = process.env.MODULE_ADDRESS!;
-const PASSPORT_MODULE_NAME = "passport";
-const PASSPORT_MINT_FUNCTION = "mint";
 const PASSPORT_INIT_PROBE_PRODUCT_ID = "__luxpass_passport_init_probe__";
 const PRODUCT_CACHE_TTL_MS = 60 * 1000;
+const LPT_TREASURY_ADDRESS = process.env.LPT_TREASURY_ADDRESS!;
+const OCTAS_PER_APT = 100_000_000;
 
 type MintedEventRecord = {
   version?: string;
@@ -190,7 +203,7 @@ function buildMintPayload(params: {
   } = params;
 
   return {
-    function: `${MODULE_ADDRESS}::${PASSPORT_MODULE_NAME}::${PASSPORT_MINT_FUNCTION}`,
+    function: PASSPORT_MINT_FN,
     functionArguments: [
       registryAddress,
       ownerAddress,
@@ -198,6 +211,84 @@ function buildMintPayload(params: {
       metadataIpfsUri,
       metadataBytes,
       transferable,
+    ],
+  };
+}
+
+function buildMintWithBurnPayload(params: {
+  registryAddress: string;
+  ownerAddress: string;
+  serialPlainBytes: number[];
+  metadataIpfsUri: string;
+  metadataBytes: number[];
+  transferable: boolean;
+  lptStateAddress: string;
+  burnAmount: string;
+}): PreparedMintPayload {
+  const {
+    registryAddress,
+    ownerAddress,
+    serialPlainBytes,
+    metadataIpfsUri,
+    metadataBytes,
+    transferable,
+    lptStateAddress,
+    burnAmount,
+  } = params;
+
+  return {
+    function: PASSPORT_MINT_WITH_BURN_FN,
+    functionArguments: [
+      registryAddress,
+      ownerAddress,
+      serialPlainBytes,
+      metadataIpfsUri,
+      metadataBytes,
+      transferable,
+      lptStateAddress,
+      burnAmount,
+    ],
+  };
+}
+
+function buildMintWithBurnLptPayload(params: {
+  registryAddress: string;
+  ownerAddress: string;
+  serialPlainBytes: number[];
+  metadataIpfsUri: string;
+  metadataBytes: number[];
+  transferable: boolean;
+  lptStateAddress: string;
+  burnAmount: string;
+  treasuryAddress: string;
+  gasFeeAmount: string;
+}): PreparedMintPayload {
+  const {
+    registryAddress,
+    ownerAddress,
+    serialPlainBytes,
+    metadataIpfsUri,
+    metadataBytes,
+    transferable,
+    lptStateAddress,
+    burnAmount,
+    treasuryAddress,
+    gasFeeAmount,
+  } = params;
+
+  return {
+    function: PASSPORT_MINT_WITH_BURN_LPT_FN,
+    functionArguments: [
+      registryAddress,
+      ownerAddress,
+      serialPlainBytes,
+      metadataIpfsUri,
+      metadataBytes,
+      transferable,
+      lptStateAddress,
+      burnAmount,
+      treasuryAddress,
+      gasFeeAmount,
     ],
   };
 }
@@ -213,6 +304,48 @@ function buildTransferPayload(params: {
       params.passportObjectAddress,
       params.newOwnerAddress,
       params.registryAddress,
+    ],
+  };
+}
+
+function buildTransferWithBurnPayload(params: {
+  passportObjectAddress: string;
+  newOwnerAddress: string;
+  registryAddress: string;
+  lptStateAddress: string;
+  burnAmount: string;
+}): PreparedTransferPayload {
+  return {
+    function: PASSPORT_TRANSFER_WITH_BURN_FN,
+    functionArguments: [
+      params.passportObjectAddress,
+      params.newOwnerAddress,
+      params.registryAddress,
+      params.lptStateAddress,
+      params.burnAmount,
+    ],
+  };
+}
+
+function buildTransferWithBurnLptPayload(params: {
+  passportObjectAddress: string;
+  newOwnerAddress: string;
+  registryAddress: string;
+  lptStateAddress: string;
+  burnAmount: string;
+  treasuryAddress: string;
+  gasFeeAmount: string;
+}): PreparedTransferPayload {
+  return {
+    function: PASSPORT_TRANSFER_WITH_BURN_LPT_FN,
+    functionArguments: [
+      params.passportObjectAddress,
+      params.newOwnerAddress,
+      params.registryAddress,
+      params.lptStateAddress,
+      params.burnAmount,
+      params.treasuryAddress,
+      params.gasFeeAmount,
     ],
   };
 }
@@ -311,6 +444,53 @@ function toUtf8Hex(value: string): string {
   return `0x${Buffer.from(value, "utf8").toString("hex")}`;
 }
 
+function parseBurnAmount(value: unknown): string {
+  const text = String(value ?? "").trim();
+  if (!/^\d+$/.test(text)) {
+    throw new Error("burnAmount must be a positive integer.");
+  }
+
+  if (text === "0") {
+    throw new Error("burnAmount must be greater than 0.");
+  }
+
+  return text;
+}
+
+function parseSimNumber(value: unknown): number {
+  const text = String(value ?? "").trim();
+  if (!/^\d+$/.test(text)) {
+    return 0;
+  }
+  return Number(text);
+}
+
+async function estimateGasFeeLpt(
+  sender: string,
+  functionId: string,
+  functionArguments: unknown[]
+): Promise<string> {
+  const transaction = await aptos.transaction.build.simple({
+    sender,
+    data: {
+      function: functionId as `${string}::${string}::${string}`,
+      functionArguments: functionArguments as any,
+    },
+  });
+
+  const simulated = await aptos.transaction.simulate.simple({ transaction });
+  const first = simulated[0];
+  if (!first) {
+    throw new Error("Unable to estimate gas fee for LPT-sponsored payload.");
+  }
+
+  const gasUsed = parseSimNumber((first as { gas_used?: unknown }).gas_used);
+  const gasUnitPrice = parseSimNumber((first as { gas_unit_price?: unknown }).gas_unit_price);
+  const totalOctas = gasUsed * gasUnitPrice;
+  const lptFee = Math.ceil(totalOctas / OCTAS_PER_APT);
+  return String(lptFee > 0 ? lptFee : 1);
+}
+
 export const passportService = {
   async getPassport(passportObjectAddr: string) {
     return getPassport(aptos, passportObjectAddr);
@@ -380,6 +560,187 @@ export const passportService = {
       serialPlainBytes,
       metadataBytes,
       transferable,
+    });
+
+    return {
+      success: true,
+      imageCid: imageUpload.cid,
+      imageIpfsUri: imageUpload.ipfsUri,
+      metadataCid: metadataUpload.cid,
+      metadataIpfsUri: metadataUpload.ipfsUri,
+      metadata,
+      payload,
+    };
+  },
+
+  async prepareMintPassportWithBurn(params: {
+    issuerWalletAddress: string;
+    body: PrepareMintWithBurnPassportRequestBody;
+    imageFile?: Express.Multer.File;
+  }): Promise<PrepareMintPassportResponse> {
+    const { issuerWalletAddress, body, imageFile } = params;
+
+    validateWalletAddress(issuerWalletAddress, "issuer wallet address");
+    validateWalletAddress(body.ownerAddress, "owner address");
+    validateImageFile(imageFile);
+
+    const productName = validateRequiredString(body.productName, "productName");
+    const brand = validateRequiredString(body.brand, "brand");
+    const category = validateRequiredString(body.category, "category");
+    const serialNumber = validateRequiredString(body.serialNumber, "serialNumber");
+    const manufacturingDate = validateRequiredString(
+      body.manufacturingDate,
+      "manufacturingDate"
+    );
+    const countryOfOrigin = validateRequiredString(
+      body.countryOfOrigin,
+      "countryOfOrigin"
+    );
+    const description = validateRequiredString(body.description, "description");
+    const materials = parseMaterials(body.materials);
+
+    if (materials.length === 0) {
+      throw new Error("At least one material is required.");
+    }
+
+    const normalizedOwnerAddress = normalizeAddress(body.ownerAddress);
+    const normalizedRegistryAddress = normalizeAddress(REGISTRY_ADDRESS);
+    const normalizedLptStateAddress = normalizeAddress(LPT_STATE_ADDRESS);
+    const burnAmount = parseBurnAmount(body.burnAmount);
+    const serialPlainBytes = Array.from(Buffer.from(serialNumber, "utf8"));
+    const transferable = parseTransferable(body.transferable);
+
+    await ensurePassportInfrastructureInitialized();
+
+    const imageUpload = await uploadImageToPinata(imageFile);
+
+    const metadata = buildPassportMetadata({
+      productName,
+      brand,
+      category,
+      serialNumber,
+      manufacturingDate,
+      materials,
+      countryOfOrigin,
+      description,
+      imageIpfsUri: imageUpload.ipfsUri,
+    });
+
+    const metadataUpload = await uploadMetadataToPinata(metadata);
+    const metadataJson = JSON.stringify(metadata, null, 2);
+    const metadataBytes = Array.from(Buffer.from(metadataJson, "utf8"));
+
+    const payload = buildMintWithBurnPayload({
+      registryAddress: normalizedRegistryAddress,
+      ownerAddress: normalizedOwnerAddress,
+      metadataIpfsUri: metadataUpload.ipfsUri,
+      serialPlainBytes,
+      metadataBytes,
+      transferable,
+      lptStateAddress: normalizedLptStateAddress,
+      burnAmount,
+    });
+
+    return {
+      success: true,
+      imageCid: imageUpload.cid,
+      imageIpfsUri: imageUpload.ipfsUri,
+      metadataCid: metadataUpload.cid,
+      metadataIpfsUri: metadataUpload.ipfsUri,
+      metadata,
+      payload,
+    };
+  },
+
+  async prepareMintPassportWithBurnLpt(params: {
+    issuerWalletAddress: string;
+    body: PrepareMintWithBurnLptPassportRequestBody;
+    imageFile?: Express.Multer.File;
+  }): Promise<PrepareMintPassportResponse> {
+    const { issuerWalletAddress, body, imageFile } = params;
+
+    validateWalletAddress(issuerWalletAddress, "issuer wallet address");
+    validateWalletAddress(body.ownerAddress, "owner address");
+    validateImageFile(imageFile);
+
+    const productName = validateRequiredString(body.productName, "productName");
+    const brand = validateRequiredString(body.brand, "brand");
+    const category = validateRequiredString(body.category, "category");
+    const serialNumber = validateRequiredString(body.serialNumber, "serialNumber");
+    const manufacturingDate = validateRequiredString(
+      body.manufacturingDate,
+      "manufacturingDate"
+    );
+    const countryOfOrigin = validateRequiredString(
+      body.countryOfOrigin,
+      "countryOfOrigin"
+    );
+    const description = validateRequiredString(body.description, "description");
+    const materials = parseMaterials(body.materials);
+
+    if (materials.length === 0) {
+      throw new Error("At least one material is required.");
+    }
+
+    const normalizedIssuerAddress = normalizeAddress(issuerWalletAddress);
+    const normalizedOwnerAddress = normalizeAddress(body.ownerAddress);
+    const normalizedRegistryAddress = normalizeAddress(REGISTRY_ADDRESS);
+    const normalizedLptStateAddress = normalizeAddress(LPT_STATE_ADDRESS);
+    const normalizedTreasuryAddress = normalizeAddress(LPT_TREASURY_ADDRESS);
+    const burnAmount = parseBurnAmount(body.burnAmount);
+    const serialPlainBytes = Array.from(Buffer.from(serialNumber, "utf8"));
+    const transferable = parseTransferable(body.transferable);
+
+    await ensurePassportInfrastructureInitialized();
+
+    const imageUpload = await uploadImageToPinata(imageFile);
+
+    const metadata = buildPassportMetadata({
+      productName,
+      brand,
+      category,
+      serialNumber,
+      manufacturingDate,
+      materials,
+      countryOfOrigin,
+      description,
+      imageIpfsUri: imageUpload.ipfsUri,
+    });
+
+    const metadataUpload = await uploadMetadataToPinata(metadata);
+    const metadataJson = JSON.stringify(metadata, null, 2);
+    const metadataBytes = Array.from(Buffer.from(metadataJson, "utf8"));
+
+    const draftPayload = buildMintWithBurnLptPayload({
+      registryAddress: normalizedRegistryAddress,
+      ownerAddress: normalizedOwnerAddress,
+      metadataIpfsUri: metadataUpload.ipfsUri,
+      serialPlainBytes,
+      metadataBytes,
+      transferable,
+      lptStateAddress: normalizedLptStateAddress,
+      burnAmount,
+      treasuryAddress: normalizedTreasuryAddress,
+      gasFeeAmount: "1",
+    });
+
+    const gasFeeAmount = await estimateGasFeeLpt(
+      normalizedIssuerAddress,
+      draftPayload.function,
+      draftPayload.functionArguments
+    );
+
+    const payload = buildMintWithBurnLptPayload({
+      registryAddress: normalizedRegistryAddress,
+      ownerAddress: normalizedOwnerAddress,
+      metadataIpfsUri: metadataUpload.ipfsUri,
+      serialPlainBytes,
+      metadataBytes,
+      transferable,
+      lptStateAddress: normalizedLptStateAddress,
+      burnAmount,
+      treasuryAddress: normalizedTreasuryAddress,
+      gasFeeAmount,
     });
 
     return {
@@ -472,6 +833,119 @@ export const passportService = {
     return { success: true, payload };
   },
 
+  async prepareTransferPassportWithBurn(params: {
+    callerWalletAddress: string;
+    body: PrepareTransferWithBurnRequestBody;
+  }): Promise<PrepareTransferResponse> {
+    const { callerWalletAddress, body } = params;
+
+    validateWalletAddress(body.passportObjectAddress, "passport object address");
+    validateWalletAddress(body.newOwnerAddress, "new owner address");
+
+    const normalizedPassportAddr = normalizeAddress(body.passportObjectAddress);
+    const normalizedNewOwner = normalizeAddress(body.newOwnerAddress);
+    const normalizedCaller = normalizeAddress(callerWalletAddress);
+    const normalizedRegistry = normalizeAddress(REGISTRY_ADDRESS);
+    const normalizedLptStateAddress = normalizeAddress(LPT_STATE_ADDRESS);
+    const burnAmount = parseBurnAmount(body.burnAmount);
+
+    let passport: Awaited<ReturnType<typeof getPassport>>;
+    try {
+      passport = await getPassport(aptos, normalizedPassportAddr);
+    } catch {
+      return {
+        success: false,
+        error:
+          "Invalid passportObjectAddress. Use the passport object's address (products[].passportObjectAddr), not a transaction hash.",
+      };
+    }
+
+    if (!passport.transferable) {
+      return { success: false, error: "This passport is not transferable." };
+    }
+
+    const onChainOwner = await getPassportOwner(normalizedPassportAddr);
+    if (normalizeAddress(onChainOwner) !== normalizedCaller) {
+      return { success: false, error: "You are not the owner of this passport." };
+    }
+
+    const payload = buildTransferWithBurnPayload({
+      passportObjectAddress: normalizedPassportAddr,
+      newOwnerAddress: normalizedNewOwner,
+      registryAddress: normalizedRegistry,
+      lptStateAddress: normalizedLptStateAddress,
+      burnAmount,
+    });
+
+    return { success: true, payload };
+  },
+
+  async prepareTransferPassportWithBurnLpt(params: {
+    callerWalletAddress: string;
+    body: PrepareTransferWithBurnLptRequestBody;
+  }): Promise<PrepareTransferResponse> {
+    const { callerWalletAddress, body } = params;
+
+    validateWalletAddress(body.passportObjectAddress, "passport object address");
+    validateWalletAddress(body.newOwnerAddress, "new owner address");
+
+    const normalizedPassportAddr = normalizeAddress(body.passportObjectAddress);
+    const normalizedNewOwner = normalizeAddress(body.newOwnerAddress);
+    const normalizedCaller = normalizeAddress(callerWalletAddress);
+    const normalizedRegistry = normalizeAddress(REGISTRY_ADDRESS);
+    const normalizedLptStateAddress = normalizeAddress(LPT_STATE_ADDRESS);
+    const normalizedTreasuryAddress = normalizeAddress(LPT_TREASURY_ADDRESS);
+    const burnAmount = parseBurnAmount(body.burnAmount);
+
+    let passport: Awaited<ReturnType<typeof getPassport>>;
+    try {
+      passport = await getPassport(aptos, normalizedPassportAddr);
+    } catch {
+      return {
+        success: false,
+        error:
+          "Invalid passportObjectAddress. Use the passport object's address (products[].passportObjectAddr), not a transaction hash.",
+      };
+    }
+
+    if (!passport.transferable) {
+      return { success: false, error: "This passport is not transferable." };
+    }
+
+    const onChainOwner = await getPassportOwner(normalizedPassportAddr);
+    if (normalizeAddress(onChainOwner) !== normalizedCaller) {
+      return { success: false, error: "You are not the owner of this passport." };
+    }
+
+    const draftPayload = buildTransferWithBurnLptPayload({
+      passportObjectAddress: normalizedPassportAddr,
+      newOwnerAddress: normalizedNewOwner,
+      registryAddress: normalizedRegistry,
+      lptStateAddress: normalizedLptStateAddress,
+      burnAmount,
+      treasuryAddress: normalizedTreasuryAddress,
+      gasFeeAmount: "1",
+    });
+
+    const gasFeeAmount = await estimateGasFeeLpt(
+      normalizedCaller,
+      draftPayload.function,
+      draftPayload.functionArguments
+    );
+
+    const payload = buildTransferWithBurnLptPayload({
+      passportObjectAddress: normalizedPassportAddr,
+      newOwnerAddress: normalizedNewOwner,
+      registryAddress: normalizedRegistry,
+      lptStateAddress: normalizedLptStateAddress,
+      burnAmount,
+      treasuryAddress: normalizedTreasuryAddress,
+      gasFeeAmount,
+    });
+
+    return { success: true, payload };
+  },
+
   async recordTransferPassport(params: {
     body: RecordTransferRequestBody;
   }): Promise<RecordTransferResponse> {
@@ -504,7 +978,11 @@ export const passportService = {
     }
 
     const fnName = tx.payload?.function?.toLowerCase() ?? "";
-    if (fnName !== PASSPORT_TRANSFER_FN.toLowerCase()) {
+    const isSupportedTransfer =
+      fnName === PASSPORT_TRANSFER_FN.toLowerCase() ||
+      fnName === PASSPORT_TRANSFER_WITH_BURN_FN.toLowerCase() ||
+      fnName === PASSPORT_TRANSFER_WITH_BURN_LPT_FN.toLowerCase();
+    if (!isSupportedTransfer) {
       return { success: false, error: "Transaction is not a transfer transaction." };
     }
 

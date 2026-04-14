@@ -11,6 +11,12 @@ export type PrepareMintPassportRequestBody = {
     transferable?: boolean;
 }
 
+export type PrepareMintWithBurnPassportRequestBody = PrepareMintPassportRequestBody & {
+  burnAmount: number | string;
+};
+
+export type PrepareMintWithBurnLptPassportRequestBody = PrepareMintWithBurnPassportRequestBody;
+
 export type PassportMetadataAttribute = {
     trait_type: string;
     value: string;
@@ -53,6 +59,12 @@ export type PrepareTransferRequestBody = {
   passportObjectAddress: string;
   newOwnerAddress: string;
 };
+
+export type PrepareTransferWithBurnRequestBody = PrepareTransferRequestBody & {
+  burnAmount: number | string;
+};
+
+export type PrepareTransferWithBurnLptRequestBody = PrepareTransferWithBurnRequestBody;
 
 export type PreparedTransferPayload = {
   function: string;

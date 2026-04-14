@@ -12,6 +12,7 @@ module luxpass::passport {
     use std::string::String;
 
     use luxpass::issuer_registry;
+    use luxpass::lux_pass_token;
 
     // ----------------------
     // Error codes
@@ -128,9 +129,7 @@ module luxpass::passport {
     // Entry functions
     // ----------------------
 
-    // Mint a new passport Object owned by `owner`.
-    // Also writes mapping: serial_key -> passport_object_addr into PassportIndex.
-    public entry fun mint(
+    fun mint_impl(
         issuer: &signer,
         registry_addr: address,
         owner: address,
@@ -193,8 +192,80 @@ module luxpass::passport {
         event::emit_event(&mut ev.minted, PassportMinted { passport: passport_addr, issuer: issuer_addr, owner });
     }
 
-    // Transfer a passport (only if transferable).
-    public entry fun transfer(
+    // Mint a new passport Object owned by `owner`.
+    // Also writes mapping: serial_key -> passport_object_addr into PassportIndex.
+    public entry fun mint(
+        issuer: &signer,
+        registry_addr: address,
+        owner: address,
+        serial_plain: vector<u8>,
+        metadata_uri: String,
+        metadata_bytes: vector<u8>,
+        transferable: bool,
+    ) acquires PassportEvents, PassportIndex {
+        mint_impl(
+            issuer,
+            registry_addr,
+            owner,
+            serial_plain,
+            metadata_uri,
+            metadata_bytes,
+            transferable,
+        );
+    }
+
+    /// Same as `mint`, but burns `burn_amount` LPT from the issuer first (atomic).
+    public entry fun mint_with_burn(
+        issuer: &signer,
+        registry_addr: address,
+        owner: address,
+        serial_plain: vector<u8>,
+        metadata_uri: String,
+        metadata_bytes: vector<u8>,
+        transferable: bool,
+        lpt_state_addr: address,
+        burn_amount: u64,
+    ) acquires PassportEvents, PassportIndex {
+        lux_pass_token::passport_burn(issuer, lpt_state_addr, burn_amount);
+        mint_impl(
+            issuer,
+            registry_addr,
+            owner,
+            serial_plain,
+            metadata_uri,
+            metadata_bytes,
+            transferable,
+        );
+    }
+
+    /// Same as `mint_with_burn`, but also transfers LPT gas-fee to `treasury`.
+    public entry fun mint_with_burn_lpt(
+        issuer: &signer,
+        registry_addr: address,
+        owner: address,
+        serial_plain: vector<u8>,
+        metadata_uri: String,
+        metadata_bytes: vector<u8>,
+        transferable: bool,
+        lpt_state_addr: address,
+        burn_amount: u64,
+        treasury: address,
+        gas_fee_amount: u64,
+    ) acquires PassportEvents, PassportIndex {
+        lux_pass_token::passport_burn(issuer, lpt_state_addr, burn_amount);
+        lux_pass_token::passport_gas_fee(issuer, lpt_state_addr, treasury, gas_fee_amount);
+        mint_impl(
+            issuer,
+            registry_addr,
+            owner,
+            serial_plain,
+            metadata_uri,
+            metadata_bytes,
+            transferable,
+        );
+    }
+
+    fun transfer_impl(
         owner: &signer,
         passport: Object<Passport>,
         to: address,
@@ -214,6 +285,45 @@ module luxpass::passport {
         assert!(exists<PassportEvents>(registry_addr), E_EVENTS_NOT_INITIALIZED);
         let ev = borrow_global_mut<PassportEvents>(registry_addr);
         event::emit_event(&mut ev.transferred, PassportTransferred { passport: passport_addr, from: owner_addr, to });
+    }
+
+    // Transfer a passport (only if transferable).
+    public entry fun transfer(
+        owner: &signer,
+        passport: Object<Passport>,
+        to: address,
+        registry_addr: address,
+    ) acquires Passport, PassportControl, PassportEvents {
+        transfer_impl(owner, passport, to, registry_addr);
+    }
+
+    /// Same as `transfer`, but burns `burn_amount` LPT from the owner first (atomic).
+    public entry fun trf_with_burn(
+        owner: &signer,
+        passport: Object<Passport>,
+        to: address,
+        registry_addr: address,
+        lpt_state_addr: address,
+        burn_amount: u64,
+    ) acquires Passport, PassportControl, PassportEvents {
+        lux_pass_token::transfer_burn(owner, lpt_state_addr, burn_amount);
+        transfer_impl(owner, passport, to, registry_addr);
+    }
+
+    /// Same as `trf_with_burn`, but also transfers LPT gas-fee to `treasury`.
+    public entry fun trf_with_burn_lpt(
+        owner: &signer,
+        passport: Object<Passport>,
+        to: address,
+        registry_addr: address,
+        lpt_state_addr: address,
+        burn_amount: u64,
+        treasury: address,
+        gas_fee_amount: u64,
+    ) acquires Passport, PassportControl, PassportEvents {
+        lux_pass_token::transfer_burn(owner, lpt_state_addr, burn_amount);
+        lux_pass_token::transfer_gas_fee(owner, lpt_state_addr, treasury, gas_fee_amount);
+        transfer_impl(owner, passport, to, registry_addr);
     }
 
     // Update status (issuer or registry admin).

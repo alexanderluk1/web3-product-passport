@@ -1,6 +1,11 @@
 export const MODULE_ADDRESS = process.env.MODULE_ADDRESS!; // published address
 export const PASSPORT_GET_FN = `${MODULE_ADDRESS}::passport::get_passport`;
+export const PASSPORT_MINT_FN = `${MODULE_ADDRESS}::passport::mint`;
+export const PASSPORT_MINT_WITH_BURN_FN = `${MODULE_ADDRESS}::passport::mint_with_burn`;
+export const PASSPORT_MINT_WITH_BURN_LPT_FN = `${MODULE_ADDRESS}::passport::mint_with_burn_lpt`;
 export const PASSPORT_TRANSFER_FN = `${MODULE_ADDRESS}::passport::transfer`;
+export const PASSPORT_TRANSFER_WITH_BURN_FN = `${MODULE_ADDRESS}::passport::trf_with_burn`;
+export const PASSPORT_TRANSFER_WITH_BURN_LPT_FN = `${MODULE_ADDRESS}::passport::trf_with_burn_lpt`;
 export const REGISTRY_ADDRESS = process.env.REGISTRY_ADDRESS!; // address of admin registry
 export const LOOKUP_BY_PRODUCT_FN = `${MODULE_ADDRESS}::passport::passport_address_for_product_id`;
 const MODULE_NAME = "issuer_registry"

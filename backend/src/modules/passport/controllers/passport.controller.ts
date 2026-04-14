@@ -2,13 +2,17 @@ import type { NextFunction, Request, Response } from "express";
 import { passportService } from "../services/passport.service";
 import type {
   PrepareMintPassportRequestBody,
+  PrepareMintWithBurnPassportRequestBody,
+  PrepareMintWithBurnLptPassportRequestBody,
   PrepareTransferRequestBody,
+  PrepareTransferWithBurnRequestBody,
+  PrepareTransferWithBurnLptRequestBody,
   RecordTransferRequestBody,
 } from "../types/passport.types";
 
 function normalizeByteVectorLike(value: unknown): unknown {
   if (ArrayBuffer.isView(value)) {
-    return Array.from(value as ArrayLike<number>);
+    return Array.from(value as unknown as ArrayLike<number>);
   }
 
   if (Array.isArray(value)) {
@@ -75,6 +79,93 @@ export async function prepareMintPassportHandler(req: Request, res: Response) {
   }
 }
 
+export async function prepareMintPassportWithBurnHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const result = await passportService.prepareMintPassportWithBurn({
+      issuerWalletAddress: req.user.walletAddress,
+      body: req.body as PrepareMintWithBurnPassportRequestBody,
+      imageFile: req.file,
+    });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    const normalizedPayload = {
+      ...result.payload,
+      functionArguments: result.payload.functionArguments.map((arg) =>
+        normalizeByteVectorLike(arg)
+      ),
+    };
+
+    return res.status(200).json({
+      ...result,
+      payload: normalizedPayload,
+    });
+  } catch (error) {
+    console.error("[passport] prepare mint with burn failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to prepare mint-with-burn passport payload",
+    });
+  }
+}
+
+export async function prepareMintPassportWithBurnLptHandler(
+  req: Request,
+  res: Response
+) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const result = await passportService.prepareMintPassportWithBurnLpt({
+      issuerWalletAddress: req.user.walletAddress,
+      body: req.body as PrepareMintWithBurnLptPassportRequestBody,
+      imageFile: req.file,
+    });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    const normalizedPayload = {
+      ...result.payload,
+      functionArguments: result.payload.functionArguments.map((arg) =>
+        normalizeByteVectorLike(arg)
+      ),
+    };
+
+    return res.status(200).json({
+      ...result,
+      payload: normalizedPayload,
+    });
+  } catch (error) {
+    console.error("[passport] prepare mint with burn+lpt failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to prepare mint-with-burn-lpt passport payload",
+    });
+  }
+}
+
 export async function prepareTransferPassportHandler(req: Request, res: Response) {
   try {
     if (!req.user) {
@@ -111,6 +202,92 @@ export async function prepareTransferPassportHandler(req: Request, res: Response
         error instanceof Error
           ? error.message
           : "Failed to prepare transfer payload.",
+    });
+  }
+}
+
+export async function prepareTransferPassportWithBurnHandler(
+  req: Request,
+  res: Response
+) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const body = req.body as PrepareTransferWithBurnRequestBody;
+
+    if (!body.passportObjectAddress || !body.newOwnerAddress || body.burnAmount == null) {
+      return res.status(400).json({
+        success: false,
+        error: "passportObjectAddress, newOwnerAddress, and burnAmount are required.",
+      });
+    }
+
+    const result = await passportService.prepareTransferPassportWithBurn({
+      callerWalletAddress: req.user.walletAddress,
+      body,
+    });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] prepare transfer with burn failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to prepare transfer-with-burn payload.",
+    });
+  }
+}
+
+export async function prepareTransferPassportWithBurnLptHandler(
+  req: Request,
+  res: Response
+) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized",
+      });
+    }
+
+    const body = req.body as PrepareTransferWithBurnLptRequestBody;
+
+    if (!body.passportObjectAddress || !body.newOwnerAddress || body.burnAmount == null) {
+      return res.status(400).json({
+        success: false,
+        error: "passportObjectAddress, newOwnerAddress, and burnAmount are required.",
+      });
+    }
+
+    const result = await passportService.prepareTransferPassportWithBurnLpt({
+      callerWalletAddress: req.user.walletAddress,
+      body,
+    });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] prepare transfer with burn+lpt failed:", error);
+    return res.status(400).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to prepare transfer-with-burn-lpt payload.",
     });
   }
 }
@@ -154,7 +331,7 @@ export async function recordTransferPassportHandler(req: Request, res: Response)
 
 export async function getPassportHandler(req: Request, res: Response, next: NextFunction) {
   try {
-    const passportObjectAddr = req.params.passportObjectAddr;
+    const passportObjectAddr = String(req.params.passportObjectAddr);
     const data = await passportService.getPassport(passportObjectAddr);
     return res.status(200).json({ ok: true, data });
   } catch (err) {
@@ -169,7 +346,7 @@ export async function getPassportByProductIdHandler(
   next: NextFunction
 ) {
   try {
-    const productId = req.params.productId;
+    const productId = String(req.params.productId);
     const product = await passportService.getProductById(productId);
     return res.status(200).json({ ok: true, product });
   } catch (e) {
@@ -199,7 +376,7 @@ export async function getPassportProvenanceByProductIdHandler(
   next: NextFunction
 ) {
   try {
-    const productId = req.params.productId;
+    const productId = String(req.params.productId);
     const provenance = await passportService.getProductProvenance(productId);
     return res.status(200).json({ ok: true, provenance });
   } catch (e) {
