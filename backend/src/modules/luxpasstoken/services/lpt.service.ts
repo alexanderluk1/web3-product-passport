@@ -167,24 +167,78 @@ async function verifyAptPurchasePayment(params: {
     requiredAptOctas,
   } = params;
 
-  const executed = await aptos.waitForTransaction({ transactionHash: paymentTransactionHash });
-  const transaction = await aptos.getTransactionByHash({ transactionHash: paymentTransactionHash });
+  console.info("[lpt:purchase-apt] verifying APT payment", {
+    paymentTransactionHash,
+    buyerAddress,
+    treasuryAddress,
+    requiredAptOctas: requiredAptOctas.toString(),
+  });
+
+  const executed = await aptos
+    .waitForTransaction({ transactionHash: paymentTransactionHash })
+    .catch((error) => {
+      console.error("[lpt:purchase-apt] failed while waiting for payment transaction", {
+        paymentTransactionHash,
+        error,
+      });
+      throw error;
+    });
+  const transaction = await aptos
+    .getTransactionByHash({ transactionHash: paymentTransactionHash })
+    .catch((error) => {
+      console.error("[lpt:purchase-apt] failed while fetching payment transaction", {
+        paymentTransactionHash,
+        error,
+      });
+      throw error;
+    });
+
+  const tx = transaction as {
+    type?: unknown;
+    success?: unknown;
+    sender?: unknown;
+    payload?: unknown;
+    vm_status?: unknown;
+  };
+  const payloadFunction = getPayloadFunction(tx.payload);
+
+  console.info("[lpt:purchase-apt] fetched payment transaction", {
+    paymentTransactionHash,
+    waitSuccess: executed.success,
+    transactionType: tx.type,
+    transactionSuccess: tx.success,
+    sender: tx.sender,
+    payloadFunction,
+    vmStatus: tx.vm_status,
+  });
 
   if (!executed.success || !isSuccessfulUserTransaction(transaction)) {
+    console.error("[lpt:purchase-apt] payment transaction was not successful", {
+      paymentTransactionHash,
+      waitSuccess: executed.success,
+      transactionType: tx.type,
+      transactionSuccess: tx.success,
+      vmStatus: tx.vm_status,
+    });
     throw new Error("APT payment transaction was not successful.");
   }
 
-  const tx = transaction as {
-    sender?: unknown;
-    payload?: unknown;
-  };
   const sender = normaliseAddress(String(tx.sender ?? ""), "payment sender");
   if (sender !== buyerAddress) {
+    console.error("[lpt:purchase-apt] payment sender mismatch", {
+      paymentTransactionHash,
+      expectedBuyer: buyerAddress,
+      actualSender: sender,
+    });
     throw new Error("APT payment sender does not match authenticated wallet.");
   }
 
-  const payloadFunction = getPayloadFunction(tx.payload);
   if (payloadFunction !== "0x1::aptos_account::transfer") {
+    console.error("[lpt:purchase-apt] unexpected payment function", {
+      paymentTransactionHash,
+      expectedFunction: "0x1::aptos_account::transfer",
+      actualFunction: payloadFunction,
+    });
     throw new Error("APT payment transaction is not an APT transfer.");
   }
 
@@ -193,12 +247,29 @@ async function verifyAptPurchasePayment(params: {
   const amountOctas = parseOnChainInteger(args[1], "payment amount");
 
   if (recipient !== treasuryAddress) {
+    console.error("[lpt:purchase-apt] payment treasury mismatch", {
+      paymentTransactionHash,
+      expectedTreasury: treasuryAddress,
+      actualRecipient: recipient,
+    });
     throw new Error("APT payment recipient does not match treasury wallet.");
   }
 
   if (amountOctas < requiredAptOctas) {
+    console.error("[lpt:purchase-apt] payment amount too low", {
+      paymentTransactionHash,
+      requiredAptOctas: requiredAptOctas.toString(),
+      actualAmountOctas: amountOctas.toString(),
+    });
     throw new Error("APT payment amount is lower than the quoted price.");
   }
+
+  console.info("[lpt:purchase-apt] APT payment verified", {
+    paymentTransactionHash,
+    sender,
+    recipient,
+    amountOctas: amountOctas.toString(),
+  });
 }
 
 function isStateNotInitialisedError(error: unknown): boolean {
@@ -438,6 +509,14 @@ export const lptService = {
     const treasuryAddress = aptPurchaseTreasuryAddress();
     const aptAmountOctas = amount * APT_PURCHASE_PRICE_OCTAS_PER_LPT;
 
+    console.info("[lpt:purchase-apt] prepare requested", {
+      buyerAddress: buyer,
+      lptAmount: amount.toString(),
+      treasuryAddress,
+      aptAmountOctas: aptAmountOctas.toString(),
+      priceOctasPerLpt: APT_PURCHASE_PRICE_OCTAS_PER_LPT.toString(),
+    });
+
     return {
       payload: buildAptTransferPayload(treasuryAddress, aptAmountOctas),
       buyerAddress: buyer,
@@ -471,7 +550,20 @@ export const lptService = {
     const treasuryAddress = aptPurchaseTreasuryAddress();
     const aptAmountOctas = amount * APT_PURCHASE_PRICE_OCTAS_PER_LPT;
 
+    console.info("[lpt:purchase-apt] complete requested", {
+      buyerAddress: buyer,
+      lptAmount: amount.toString(),
+      paymentTransactionHash: transactionHash,
+      treasuryAddress,
+      aptAmountOctas: aptAmountOctas.toString(),
+      priceOctasPerLpt: APT_PURCHASE_PRICE_OCTAS_PER_LPT.toString(),
+    });
+
     if (completedAptPurchaseHashes.has(transactionHash)) {
+      console.error("[lpt:purchase-apt] duplicate payment transaction", {
+        buyerAddress: buyer,
+        paymentTransactionHash: transactionHash,
+      });
       throw new Error("APT payment transaction has already been credited.");
     }
 
@@ -482,14 +574,36 @@ export const lptService = {
       requiredAptOctas: aptAmountOctas,
     });
 
+    console.info("[lpt:purchase-apt] crediting buyer after verified APT payment", {
+      buyerAddress: buyer,
+      lptAmount: amount.toString(),
+      paymentTransactionHash: transactionHash,
+    });
+
     const creditResult = await writeCreditFiat(aptos, getAdminAccount(), buyer, amount);
     if (!creditResult.success) {
+      console.error("[lpt:purchase-apt] failed to credit buyer", {
+        buyerAddress: buyer,
+        lptAmount: amount.toString(),
+        paymentTransactionHash: transactionHash,
+        creditTransactionHash: creditResult.transactionHash,
+        vmStatus: creditResult.vmStatus,
+        error: creditResult.error,
+      });
       throw new Error(
         `Failed to credit LPT after APT payment. ${creditResult.vmStatus ?? creditResult.error}`.trim()
       );
     }
 
     completedAptPurchaseHashes.add(transactionHash);
+
+    console.info("[lpt:purchase-apt] credited buyer successfully", {
+      buyerAddress: buyer,
+      lptAmount: amount.toString(),
+      paymentTransactionHash: transactionHash,
+      creditTransactionHash: creditResult.transactionHash,
+      vmStatus: creditResult.vmStatus,
+    });
 
     return {
       buyerAddress: buyer,
