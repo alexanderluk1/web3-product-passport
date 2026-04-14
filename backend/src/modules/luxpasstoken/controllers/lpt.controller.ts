@@ -184,3 +184,13 @@ export async function getRewardConfigHandler(_req: Request, res: Response) {
     return handleError(res, error, "Failed to fetch reward config.");
   }
 }
+
+export async function getSignupClaimedHandler(req: Request, res: Response) {
+  try {
+    const ownerAddress = req.params.ownerAddress;
+    const result = await lptService.getSignupClaimed(ownerAddress);
+    return res.status(200).json({ success: true, ...result });
+  } catch (error) {
+    return handleError(res, error, "Failed to fetch signup reward status.");
+  }
+}

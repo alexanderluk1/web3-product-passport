@@ -9,6 +9,7 @@ import {
   viewBalance,
   viewPool,
   viewRewardConfig,
+  viewSignupClaimed,
   viewSupply,
 } from "../../../chains/luxpasstoken/readers";
 import { init as writeInit } from "../../../chains/luxpasstoken/writers";
@@ -184,6 +185,13 @@ export const lptService = {
   async getRewardConfig(): Promise<{ signupReward: bigint; referralReward: bigint }> {
     await ensureLptInfrastructureInitialised();
     return viewRewardConfig(aptos);
+  },
+
+  async getSignupClaimed(ownerAddress: string): Promise<{ ownerAddress: string; claimed: boolean }> {
+    await ensureLptInfrastructureInitialised();
+    const owner = normaliseAddress(ownerAddress, "ownerAddress");
+    const claimed = await viewSignupClaimed(owner);
+    return { ownerAddress: owner, claimed };
   },
 
   prepareInit(signupRewardAmount: unknown, referralRewardAmount: unknown): PreparedTransactionPayload {

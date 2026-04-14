@@ -7,11 +7,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
-import { Shield, Package, ArrowRightLeft, Search, User, Eye, Calendar, Building, Copy, ExternalLink, Image as ImageIcon, RefreshCw, Loader2, Lock } from "lucide-react";
+import { Shield, Package, ArrowRightLeft, Search, User, Eye, Calendar, Building, Copy, ExternalLink, Image as ImageIcon, RefreshCw, Loader2, Lock, Wallet } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useWallet } from "@aptos-labs/wallet-adapter-react";
 import { showSuccess, showError } from "@/utils/toast";
+import { LptPanel } from "@/components/LptPanel";
 
 // Pinata IPFS Gateway Configuration
 const PINATA_GATEWAY_URL = "https://amaranth-passive-chicken-549.mypinata.cloud";
@@ -530,10 +531,14 @@ const UserDashboard = () => {
           </div>
 
           <Tabs defaultValue="owned" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-2 bg-white/80 backdrop-blur-sm">
+            <TabsList className="grid w-full grid-cols-3 bg-white/80 backdrop-blur-sm">
               <TabsTrigger value="owned" className="flex items-center">
                 <Package className="mr-2 h-4 w-4" />
                 My Passports ({ownedPassports.length})
+              </TabsTrigger>
+              <TabsTrigger value="lpt" className="flex items-center">
+                <Wallet className="mr-2 h-4 w-4" />
+                LPT Wallet
               </TabsTrigger>
               <TabsTrigger value="verify" className="flex items-center">
                 <Search className="mr-2 h-4 w-4" />
@@ -711,6 +716,11 @@ const UserDashboard = () => {
                   )}
                 </CardContent>
               </Card>
+            </TabsContent>
+
+            {/* LPT Wallet Tab */}
+            <TabsContent value="lpt">
+              <LptPanel />
             </TabsContent>
 
             {/* Verify Products Tab */}
