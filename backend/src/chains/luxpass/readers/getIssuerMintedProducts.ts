@@ -19,7 +19,13 @@ const MINT_FUNCTION_NAMES = (
   .filter(Boolean);
 
 function normalizeAddress(address: string): string {
-  return address.trim().toLowerCase();
+  const normalized = address.trim().toLowerCase();
+  if (!normalized.startsWith("0x")) {
+    return normalized;
+  }
+
+  const hex = normalized.slice(2).replace(/^0+/, "");
+  return `0x${hex || "0"}`;
 }
 
 function bytesLikeToString(value: unknown): string {

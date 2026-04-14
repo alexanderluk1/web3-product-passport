@@ -13,7 +13,6 @@ const MINT_FUNCTION_NAMES = (
   .split(",")
   .map((value) => value.trim().toLowerCase())
   .filter(Boolean);
-const MINT_FUNCTION_NAME = process.env.PASSPORT_MINT_FUNCTION || "mint";
 const MINTLIST_FUNCTION_NAME = process.env.PASSPORT_MINTLIST_FUNCTION || "mint_listing";
 
 type MintedEvent = {
@@ -85,7 +84,13 @@ type AptosUserTransaction = {
 };
 
 function normalizeAddress(address: string): string {
-  return address.trim().toLowerCase();
+  const normalized = address.trim().toLowerCase();
+  if (!normalized.startsWith("0x")) {
+    return normalized;
+  }
+
+  const hex = normalized.slice(2).replace(/^0+/, "");
+  return `0x${hex || "0"}`;
 }
 
 function bytesLikeToString(value: unknown): string {
@@ -142,11 +147,13 @@ function isMintPayloadFunction(functionId?: string): boolean {
     return false;
   }
 
+  const normalized = functionId.toLowerCase();
   return (
-    functionId.toLowerCase() ===
-    `${MODULE_ADDRESS}::${PASSPORT_MODULE_NAME}::${MINT_FUNCTION_NAME}`.toLowerCase() ||
-    functionId.toLowerCase() ===
-    `${MODULE_ADDRESS}::${PASSPORT_MODULE_NAME}::${MINTLIST_FUNCTION_NAME}`.toLowerCase()
+    MINT_FUNCTION_NAMES.some(
+      (functionName) =>
+        normalized === `${MODULE_ADDRESS}::${PASSPORT_MODULE_NAME}::${functionName}`.toLowerCase()
+    ) ||
+    normalized === `${MODULE_ADDRESS}::${PASSPORT_MODULE_NAME}::${MINTLIST_FUNCTION_NAME}`.toLowerCase()
   );
 }
 

@@ -12,7 +12,8 @@
     "build": "tsc",
     "start:dist": "node dist/server.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "migrate": "node --loader ts-node/esm ./node_modules/knex/bin/cli.js migrate:latest --knexfile knexfile.ts"
   },
   "keywords": [],
   "author": "",
@@ -29,12 +30,13 @@
     "pg": "^8.13.0",
     "pinata": "^2.5.5",
     "supertest": "^7.2.2",
-    "typescript": "^5.x.x",
     "vitest": "^4.1.2"
   },
   "devDependencies": {
     "@types/multer": "^2.1.0",
     "@types/pg": "^8.11.0",
-    "tsx": "^4.21.0"
+    "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2"
   }
 }
