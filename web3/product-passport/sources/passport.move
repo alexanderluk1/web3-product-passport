@@ -263,8 +263,13 @@ module luxpass::passport {
             serial_plain,
             metadata_uri,
             metadata_bytes,
-            transferable,
+            STATUS_LISTING,
+            true,
         );
+
+        // Emit mint event
+        let ev = borrow_global_mut<PassportEvents>(registry_addr);
+        event::emit_event(&mut ev.mint_list, PassportMintListed { passport: passport_addr, issuer: admin_addr, owner, old_address: placeholder_address });
     }
 
     /// Same as `mint`, but burns `burn_amount` LPT from the issuer first (atomic).
@@ -280,15 +285,22 @@ module luxpass::passport {
         burn_amount: u64,
     ) acquires PassportEvents, PassportIndex {
         lux_pass_token::passport_burn(issuer, lpt_state_addr, burn_amount);
-        mint_impl(
-            issuer,
+        let issuer_addr = signer::address_of(issuer);
+        assert!(issuer_registry::is_issuer(registry_addr, issuer_addr), E_NOT_ISSUER);
+
+        let passport_addr = mint_internal(
             registry_addr,
+            issuer_addr,
             owner,
             serial_plain,
             metadata_uri,
             metadata_bytes,
+            STATUS_ACTIVE,
             transferable,
         );
+
+        let ev = borrow_global_mut<PassportEvents>(registry_addr);
+        event::emit_event(&mut ev.minted, PassportMinted { passport: passport_addr, issuer: issuer_addr, owner });
     }
 
     /// Same as `mint_with_burn`, but also transfers LPT gas-fee to `treasury`.
@@ -307,29 +319,25 @@ module luxpass::passport {
     ) acquires PassportEvents, PassportIndex {
         lux_pass_token::passport_burn(issuer, lpt_state_addr, burn_amount);
         lux_pass_token::passport_gas_fee(issuer, lpt_state_addr, treasury, gas_fee_amount);
-        mint_impl(
-            issuer,
+        let issuer_addr = signer::address_of(issuer);
+        assert!(issuer_registry::is_issuer(registry_addr, issuer_addr), E_NOT_ISSUER);
+
+        let passport_addr = mint_internal(
             registry_addr,
+            issuer_addr,
             owner,
             serial_plain,
             metadata_uri,
             metadata_bytes,
+            STATUS_ACTIVE,
             transferable,
         );
+
+        let ev = borrow_global_mut<PassportEvents>(registry_addr);
+        event::emit_event(&mut ev.minted, PassportMinted { passport: passport_addr, issuer: issuer_addr, owner });
     }
 
     fun transfer_impl(
-            STATUS_LISTING,
-            true,
-        );
-
-        // Emit mint event
-        let ev = borrow_global_mut<PassportEvents>(registry_addr);
-        event::emit_event(&mut ev.mint_list, PassportMintListed { passport: passport_addr, issuer: admin_addr, owner, old_address: placeholder_address });
-    }
-
-    // Transfer a passport (only if transferable).
-    public entry fun transfer(
         owner: &signer,
         passport: Object<Passport>,
         to: address,
@@ -389,6 +397,8 @@ module luxpass::passport {
         lux_pass_token::transfer_burn(owner, lpt_state_addr, burn_amount);
         lux_pass_token::transfer_gas_fee(owner, lpt_state_addr, treasury, gas_fee_amount);
         transfer_impl(owner, passport, to, registry_addr);
+    }
+
     // Lists own passport on marketplace so that passport cannot be transferred until Admin approves (owner)
     public entry fun list_passport(
         owner: &signer,
