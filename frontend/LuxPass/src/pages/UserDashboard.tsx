@@ -137,6 +137,8 @@ const formatDate = (ts: string | number) =>
 const UserDashboard = () => {
   const { user, accessToken } = useAuth();
   const { account, signAndSubmitTransaction } = useWallet();
+  const [activeTab, setActiveTab] = useState("owned");
+  const [lptWalletRefreshKey, setLptWalletRefreshKey] = useState(0);
 
   // Passport state
   const [ownedPassports, setOwnedPassports]     = useState<EnrichedProduct[]>([]);
@@ -187,6 +189,18 @@ const UserDashboard = () => {
     }
     getAptUsdPrice().then(setAptUsdRate);
   }, [user, accessToken, account]);
+
+  const handleTabChange = (value: string) => {
+    setActiveTab(value);
+
+    if (value === "owned") {
+      fetchLptBalance();
+    }
+
+    if (value === "lpt") {
+      setLptWalletRefreshKey((current) => current + 1);
+    }
+  };
 
   // ── IPFS helpers ────────────────────────────────────────────────────────────
 
@@ -703,7 +717,7 @@ const UserDashboard = () => {
             </div>
           </div>
 
-          <Tabs defaultValue="owned" className="space-y-6">
+          <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
             <TabsList className="grid w-full grid-cols-4 bg-white/80 backdrop-blur-sm">
               <TabsTrigger value="owned" className="flex items-center">
                 <Package className="mr-2 h-4 w-4" />
@@ -875,7 +889,7 @@ const UserDashboard = () => {
 
             {/* LPT Wallet Tab */}
             <TabsContent value="lpt">
-              <LptPanel />
+              <LptPanel refreshKey={lptWalletRefreshKey} />
             </TabsContent>
 
             {/* Marketplace Tab */}
