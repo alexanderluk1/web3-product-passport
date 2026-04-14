@@ -8,8 +8,13 @@ import { initRegistry } from "./chains/luxpass/writers/initRegistry.js";
 import { viewAdmin } from "./chains/luxpasstoken/readers/viewAdmin.js";
 import { init as lptInit } from "./chains/luxpasstoken/writers/init.js";
 import { getEscrowAddress } from "./chains/luxpass/readers/getEscrowAddress.js";
+import { getProtocolTreasuryAddress } from "./chains/luxpass/readers/getProtocolTreasuryAddress.js";
 import { initEscrow } from "./chains/luxpass/writers/initEscrow.js";
+import { initProtocolTreasury } from "./chains/luxpass/writers/initProtocolTreasury.js";
 import { createApp } from "./app.js";
+
+/** After first-time `init_protocol_treasury`, fund treasury APT via network faucet (devnet / local). */
+const PROTOCOL_TREASURY_INIT_FUND_OCTAS = 500 * 100_000_000;
 
 const PASSPORT_PROBE_ID = "__luxpass_passport_init_probe__";
 
@@ -232,6 +237,58 @@ async function ensureEscrowInfra(): Promise<void> {
   console.log("[preflight] Escrow init completed:", result.transactionHash);
 }
 
+async function ensureProtocolTreasury(): Promise<void> {
+  const aptos = makeAptosClient();
+  try {
+    const treasuryAddr = await getProtocolTreasuryAddress(aptos, REGISTRY_ADDRESS);
+    console.log("[preflight] Protocol treasury already initialized; address:", treasuryAddr);
+    return;
+  } catch {
+    // Not initialized yet (view aborts) or transient RPC error — attempt init below.
+  }
+
+  console.log("[preflight] Protocol treasury not found; initializing…");
+  const result = await initProtocolTreasury(aptos);
+  if (!result.success) {
+    console.warn("[preflight] Protocol treasury init failed (non-fatal):", result.vmStatus);
+    return;
+  }
+  console.log("[preflight] Protocol treasury init completed:", result.transactionHash || "(already initialized)");
+
+  const submittedNewInit = Boolean(result.transactionHash?.trim());
+  if (!submittedNewInit) {
+    return;
+  }
+
+  let treasuryRecipient: string;
+  try {
+    treasuryRecipient = await getProtocolTreasuryAddress(aptos, REGISTRY_ADDRESS);
+  } catch (e) {
+    console.warn("[preflight] Could not read treasury address after init; skipping faucet:", e);
+    return;
+  }
+
+  try {
+    const fundTxn = await aptos.fundAccount({
+      accountAddress: treasuryRecipient,
+      amount: PROTOCOL_TREASURY_INIT_FUND_OCTAS,
+      options: { waitForIndexer: false },
+    });
+    console.log(
+      "[preflight] Faucet funded protocol treasury",
+      treasuryRecipient,
+      `(${PROTOCOL_TREASURY_INIT_FUND_OCTAS} octas)`,
+      "hash:",
+      fundTxn.hash,
+    );
+  } catch (e) {
+    console.warn(
+      "[preflight] Faucet fund of protocol treasury failed (non-fatal). Ensure devnet/local faucet and APTOS_FAUCET_URL if using a custom node:",
+      e,
+    );
+  }
+}
+
 async function main(): Promise<void> {
   requireEnv("MODULE_ADDRESS");
   requireEnv("REGISTRY_ADDRESS");
@@ -244,6 +301,9 @@ async function main(): Promise<void> {
 
   console.log("[preflight] Checking escrow…");
   await ensureEscrowInfra();
+
+  console.log("[preflight] Checking protocol treasury…");
+  await ensureProtocolTreasury();
 
   console.log("[preflight] Starting server…");
   const port = Number(process.env.PORT || 3001);

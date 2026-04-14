@@ -6,6 +6,7 @@ import {
   prepareEscrowListingHandler,
   recordEscrowListingHandler,
   preparePurchaseHandler,
+  preparePurchaseWithLptHandler,
   recordPurchaseHandler,
   prepareCancelListingHandler,
   recordCancelListingHandler,
@@ -29,6 +30,7 @@ escrowRouter.post("/price/update", requireAuth, updatePriceHandler);
 
 // Buyer: purchase
 escrowRouter.post("/purchase/prepare", requireAuth, preparePurchaseHandler);
+escrowRouter.post("/purchase/with-lpt/prepare", requireAuth, preparePurchaseWithLptHandler);
 escrowRouter.post("/purchase/record", requireAuth, recordPurchaseHandler);
 
 // Seller: cancel listing

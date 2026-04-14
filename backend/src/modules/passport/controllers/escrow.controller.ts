@@ -114,6 +114,26 @@ export async function preparePurchaseHandler(req: Request, res: Response) {
   }
 }
 
+export async function preparePurchaseWithLptHandler(req: Request, res: Response) {
+  try {
+    const { passportObjectAddress } = req.body as PreparePurchaseBody;
+    if (!passportObjectAddress) {
+      return res.status(400).json({ success: false, error: "Missing passportObjectAddress." });
+    }
+    const result = await escrowService.preparePurchaseWithLpt({
+      callerWalletAddress: req.user!.walletAddress,
+      passportObjectAddress,
+    });
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    return res.json(result);
+  } catch (error) {
+    console.error("[escrow] preparePurchaseWithLpt error:", error);
+    return res.status(500).json({ success: false, error: "Internal server error." });
+  }
+}
+
 export async function recordPurchaseHandler(req: Request, res: Response) {
   try {
     const { txHash, passportObjectAddress } = req.body as RecordPurchaseBody;

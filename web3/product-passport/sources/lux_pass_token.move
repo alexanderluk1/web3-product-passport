@@ -200,6 +200,7 @@ module luxpass::lux_pass_token {
         mint_with_tag(s, recipient, amount, MINT_TAG_ADMIN);
     }
 
+    /// Same as `transfer` entry, but callable from other modules (e.g. escrow) in one user tx.
     public fun transfer_from_signer(
         from: &signer,
         state_addr: address,

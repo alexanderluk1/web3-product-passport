@@ -1,5 +1,8 @@
 module luxpass::passport {
+    friend luxpass::escrow;
+
     use aptos_framework::account;
+    use aptos_framework::aptos_account;
     use aptos_framework::event;
     use aptos_framework::guid;
     use aptos_framework::hash;
@@ -272,6 +275,30 @@ module luxpass::passport {
         event::emit_event(&mut ev.mint_list, PassportMintListed { passport: passport_addr, issuer: admin_addr, owner, old_address: placeholder_address });
     }
 
+    /// No-passport marketplace listing: user burns LPT and pays APT to `treasury_apt` (single tx).
+    public entry fun list_burn(
+        user: &signer,
+        lpt_state_addr: address,
+        burn_amount: u64,
+        treasury_apt: address,
+        apt_amount: u64,
+    ) {
+        lux_pass_token::passport_burn(user, lpt_state_addr, burn_amount);
+        aptos_account::transfer(user, treasury_apt, apt_amount);
+    }
+
+    /// No-passport marketplace listing: user burns LPT and pays LPT fee to `treasury_lpt` (single tx).
+    public entry fun list_burn_lpt(
+        user: &signer,
+        lpt_state_addr: address,
+        burn_amount: u64,
+        treasury_lpt: address,
+        gas_fee_amount: u64,
+    ) {
+        lux_pass_token::passport_burn(user, lpt_state_addr, burn_amount);
+        lux_pass_token::passport_gas_fee(user, lpt_state_addr, treasury_lpt, gas_fee_amount);
+    }
+
     /// Same as `mint`, but burns `burn_amount` LPT from the issuer first (atomic).
     public entry fun mint_with_burn(
         issuer: &signer,
@@ -397,6 +424,14 @@ module luxpass::passport {
         lux_pass_token::transfer_burn(owner, lpt_state_addr, burn_amount);
         lux_pass_token::transfer_gas_fee(owner, lpt_state_addr, treasury, gas_fee_amount);
         transfer_impl(owner, passport, to, registry_addr);
+    }
+
+    /// Escrow secondary sale: passport stays `STATUS_LISTING` through custody; reset to `ACTIVE`
+    /// before the buyer receives it so they can `list_passport` again or use normal owner flows.
+    public(friend) fun set_active_for_escrow_sale(passport_addr: address) acquires Passport {
+        let p = borrow_global_mut<Passport>(passport_addr);
+        assert!(p.status == STATUS_LISTING, E_NOT_TRANSFERABLE);
+        p.status = STATUS_ACTIVE;
     }
 
     // Lists own passport on marketplace so that passport cannot be transferred until Admin approves (owner)

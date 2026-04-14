@@ -20,6 +20,7 @@ import type {
   PrepareConfirmReceiptRequestBody,
   RecordConfirmReceiptRequestBody,
   UpdateNoPassportListingRequestBody,
+  RecordNoPassportListingDepositBody,
   PrepareMintListPassportRequestBody,
   RecordMintListRequestBody,
   getListingByPassportAddressBody,
@@ -841,6 +842,100 @@ export async function requestListingNoPassport(req: Request, res: Response) {
         error instanceof Error
           ? error.message
           : "Failed to submit listing request (no-passport).",
+    });
+  }
+}
+
+export async function prepareNoPassportListBurnHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ success: false, error: "Unauthorized" });
+    }
+    const result = await listingService.prepareNoPassportListBurn({
+      callerWalletAddress: req.user.walletAddress,
+    });
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] prepare no-passport list_burn failed:", error);
+    return res.status(400).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to prepare list_burn.",
+    });
+  }
+}
+
+export async function recordNoPassportListBurnHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ success: false, error: "Unauthorized" });
+    }
+    const body = req.body as RecordNoPassportListingDepositBody;
+    if (!body?.txHash?.trim()) {
+      return res.status(400).json({ success: false, error: "txHash is required." });
+    }
+    const result = await listingService.recordNoPassportListBurn({
+      callerWalletAddress: req.user.walletAddress,
+      txHash: body.txHash.trim(),
+    });
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] record no-passport list_burn failed:", error);
+    return res.status(400).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to record list_burn.",
+    });
+  }
+}
+
+export async function prepareNoPassportListBurnLptHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ success: false, error: "Unauthorized" });
+    }
+    const result = await listingService.prepareNoPassportListBurnLpt({
+      callerWalletAddress: req.user.walletAddress,
+    });
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] prepare no-passport list_burn_lpt failed:", error);
+    return res.status(400).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to prepare list_burn_lpt.",
+    });
+  }
+}
+
+export async function recordNoPassportListBurnLptHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ success: false, error: "Unauthorized" });
+    }
+    const body = req.body as RecordNoPassportListingDepositBody;
+    if (!body?.txHash?.trim()) {
+      return res.status(400).json({ success: false, error: "txHash is required." });
+    }
+    const result = await listingService.recordNoPassportListBurnLpt({
+      callerWalletAddress: req.user.walletAddress,
+      txHash: body.txHash.trim(),
+    });
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("[passport] record no-passport list_burn_lpt failed:", error);
+    return res.status(400).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to record list_burn_lpt.",
     });
   }
 }

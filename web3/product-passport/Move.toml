@@ -2,6 +2,7 @@
 name = "ProductPassport"
 version = "1.0.0"
 authors = []
+upgrade_policy = "compatible"
 
 [addresses]
 luxpass = "_"
@@ -11,10 +12,11 @@ luxpass = "_"
 
 [dependencies.AptosFramework]
 git = "https://github.com/aptos-labs/aptos-framework.git"
-rev = "mainnet"
+rev = "devnet"
 subdir = "aptos-framework"
 
-[dependencies.LuxPassToken]
-local = "../luxpass-token"
+# LuxPassToken lives in this package too (sources/lux_pass_token.move) so one `aptos move publish`
+# deploys token + passport + registry + escrow to the same address. Publishing the token as a
+# separate package first, then this package, causes "unregistered dependency" on devnet.
 
 [dev-dependencies]

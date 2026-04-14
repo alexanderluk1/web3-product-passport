@@ -57,7 +57,7 @@ export type MarketplaceListing = {
 };
 
 export type EscrowPrepareResponse =
-  | { success: true; payload: PreparedEscrowPayload; priceOctas?: string }
+  | { success: true; payload: PreparedEscrowPayload; priceOctas?: string; lptAmount?: string }
   | { success: false; error: string };
 
 export type EscrowRecordResponse =

@@ -136,23 +136,28 @@ Base URL: `http://localhost:3001`
 
 ## Move Packages
 
-### Product passport package
+The **LPT token** (`lux_pass_token`) and **passport stack** (`issuer_registry`, `passport`, `escrow`) are built as **one** package under `web3/product-passport` (see `sources/lux_pass_token.move`). Publish **only** this package to your deploy address. Publishing `luxpass-token` to the same address first, then `product-passport`, causes Aptos simulation errors (`metadata and code bundle mismatch` / unregistered dependency).
+
+**Framework git `rev` must match the network you publish to.** This repo pins `AptosFramework` to the **`devnet`** branch in `Move.toml`. Compiling against `rev = "mainnet"` while publishing to **devnet** has produced bogus **`unregistered dependency: …::issuer_registry`** on publish for some CLI / node combinations; if you target mainnet or testnet, switch the dependency `rev` (or use `aptos move publish --override-std mainnet|testnet|devnet`) so the framework matches the chain.
+
+### Publish (devnet example)
+
+Use **`--included-artifacts all`** so package metadata lists every module; the default `sparse` setting has caused **`metadata and code bundle mismatch` / `unregistered dependency`** on publish for multi-module packages.
 
 ```bash
 cd web3/product-passport
-aptos move test
-aptos move publish
+aptos move clean --assume-yes
+aptos move test --named-addresses luxpass=0xYOUR_DEPLOY_ADDRESS
+aptos move publish --profile YOUR_PROFILE --assume-yes --included-artifacts all --override-std devnet --named-addresses luxpass=0xYOUR_DEPLOY_ADDRESS
 ```
 
-### LuxPass token package
+If `Move.toml` already uses `rev = "devnet"` for `AptosFramework`, `--override-std devnet` is redundant but harmless. For mainnet publishes, use `--override-std mainnet` and a matching framework `rev`.
 
-```bash
-cd web3/luxpass-token
-aptos move test
-aptos move publish
-```
+The standalone `web3/luxpass-token` folder remains useful for local experiments and `aptos move test` for the token in isolation; for production-style deploys matching the backend, use the unified package above.
 
 After publishing, update `backend/.env` addresses to match deployed modules/state.
+
+**Registry vs publish address:** `issuer_registry::init` stores the `IssuerRegistry` resource on the **account that signs** the transaction (your `ADMIN_PRIVATE_KEY`). The backend calls `get_registry(REGISTRY_ADDRESS)`. Those must match: set `REGISTRY_ADDRESS` (and usually `MODULE_ADDRESS`) to the same address as the admin account derived from `ADMIN_PRIVATE_KEY`, then run init (`POST /admin/registry/init` with an admin JWT, or `npm run start:safe`) so passport `init_index` / `init_events` run too.
 
 ## Common Issues
 
@@ -177,11 +182,8 @@ cd web3/product-passport
 # optional: fund deployer/admin account first
 aptos account fund-with-faucet --account <YOUR_ADMIN_ADDRESS> --profile admin
 
-# 1) publish product-passport package (contains issuer_registry + passport)
-aptos move publish --profile admin --assume-yes
-
-# 2) publish luxpass-token package using same admin profile
-aptos move publish --profile admin --assume-yes --package-dir "../luxpass-token"
+# Single publish: lux_pass_token + issuer_registry + passport + escrow (same named address)
+aptos move publish --profile admin --assume-yes --included-artifacts all --named-addresses luxpass=<YOUR_ADMIN_ADDRESS>
 ```
 
 Then reinitialize on-chain resources:

@@ -17,6 +17,7 @@ import { WalletButton } from "@/components/WalletButton";
 import { showSuccess, showError } from "@/utils/toast";
 import { fetchEscrowListing, type EscrowListingDetail } from "@/utils/marketplace";
 import { octasToApt, getAptUsdPrice, formatUsd } from "@/utils/price";
+import { normalizeAptosAddress } from "@/utils/aptosAddress";
 
 const PINATA_GATEWAY_URL = "https://amaranth-passive-chicken-549.mypinata.cloud";
 const BASE_URL = "http://localhost:3001";
@@ -39,6 +40,11 @@ function convertIPFSToHTTP(uri: string): string {
   return uri;
 }
 
+/** Matches on-chain escrow: 100 LPT per 1 APT of listing price (1 LPT = 0.01 APT). */
+function lptAmountFromPriceOctas(priceOctas: string): bigint {
+  return (BigInt(priceOctas) * 100n) / 100_000_000n;
+}
+
 const MarketplaceDetail = () => {
   const { passportObjectAddress } = useParams<{ passportObjectAddress: string }>();
   const navigate = useNavigate();
@@ -50,6 +56,7 @@ const MarketplaceDetail = () => {
   const [loading, setLoading] = useState(true);
   const [aptUsd, setAptUsd] = useState<number>(0);
   const [showPurchaseDialog, setShowPurchaseDialog] = useState(false);
+  const [purchaseWithLpt, setPurchaseWithLpt] = useState(false);
   const [purchasing, setPurchasing] = useState(false);
   const [ownerAddress, setOwnerAddress] = useState<string>("");
 
@@ -107,12 +114,19 @@ const MarketplaceDetail = () => {
     }
   };
 
+  const openPurchaseDialog = (withLpt: boolean) => {
+    setPurchaseWithLpt(withLpt);
+    setShowPurchaseDialog(true);
+  };
+
   const handlePurchase = async () => {
     if (!accessToken || !passportObjectAddress) return;
     setPurchasing(true);
     try {
-      // 1. Prepare
-      const prepRes = await fetch(`${BASE_URL}/api/escrow/purchase/prepare`, {
+      const preparePath = purchaseWithLpt
+        ? "/api/escrow/purchase/with-lpt/prepare"
+        : "/api/escrow/purchase/prepare";
+      const prepRes = await fetch(`${BASE_URL}${preparePath}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ passportObjectAddress }),
@@ -123,7 +137,6 @@ const MarketplaceDetail = () => {
         return;
       }
 
-      // 2. Sign and submit
       const txRes = await signAndSubmitTransaction({
         data: {
           function: prepData.payload.function,
@@ -132,7 +145,6 @@ const MarketplaceDetail = () => {
         options: { maxGasAmount: 10000, gasUnitPrice: 100, expirationSecondsFromNow: 60 },
       });
 
-      // 3. Record
       const recRes = await fetch(`${BASE_URL}/api/escrow/purchase/record`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
@@ -162,7 +174,13 @@ const MarketplaceDetail = () => {
 
   const priceApt = escrowListing ? octasToApt(escrowListing.priceOctas) : "0";
   const priceUsd = aptUsd > 0 ? formatUsd(Number(priceApt) * aptUsd) : "";
-  const isSeller = user?.walletAddress?.toLowerCase() === escrowListing?.seller?.toLowerCase();
+  const lptForListing =
+    escrowListing ? lptAmountFromPriceOctas(escrowListing.priceOctas).toString() : "0";
+  const canPayWithLpt = escrowListing && lptAmountFromPriceOctas(escrowListing.priceOctas) > 0n;
+  const isSeller =
+    !!user?.walletAddress &&
+    !!escrowListing?.seller &&
+    normalizeAptosAddress(user.walletAddress) === normalizeAptosAddress(escrowListing.seller);
 
   if (loading) {
     return (
@@ -274,14 +292,27 @@ const MarketplaceDetail = () => {
                   </p>
                 </div>
               ) : (
-                <Button
-                  size="lg"
-                  className="w-full bg-purple-600 hover:bg-purple-700 text-lg py-6"
-                  onClick={() => setShowPurchaseDialog(true)}
-                >
-                  <ShoppingCart className="h-5 w-5 mr-2" />
-                  Purchase for {priceApt} APT
-                </Button>
+                <div className="flex flex-col gap-2">
+                  <Button
+                    size="lg"
+                    className="w-full bg-purple-600 hover:bg-purple-700 text-lg py-6"
+                    onClick={() => openPurchaseDialog(false)}
+                  >
+                    <ShoppingCart className="h-5 w-5 mr-2" />
+                    Purchase for {priceApt} APT
+                  </Button>
+                  {canPayWithLpt ? (
+                    <Button
+                      size="lg"
+                      variant="outline"
+                      className="w-full text-lg py-6 border-purple-300 text-purple-800 hover:bg-purple-50"
+                      onClick={() => openPurchaseDialog(true)}
+                    >
+                      <Wallet className="h-5 w-5 mr-2" />
+                      Or pay with LPT ({lptForListing} LPT)
+                    </Button>
+                  ) : null}
+                </div>
               )
             ) : (
               <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
@@ -366,12 +397,20 @@ const MarketplaceDetail = () => {
       </section>
 
       {/* Purchase confirmation dialog */}
-      <Dialog open={showPurchaseDialog} onOpenChange={setShowPurchaseDialog}>
+      <Dialog
+        open={showPurchaseDialog}
+        onOpenChange={(open) => {
+          setShowPurchaseDialog(open);
+          if (!open) setPurchaseWithLpt(false);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Confirm Purchase</DialogTitle>
             <DialogDescription>
-              You are about to purchase this item through the escrow smart contract.
+              {purchaseWithLpt
+                ? "You pay LPT to the on-chain protocol treasury; it forwards APT into escrow and the seller is paid in APT in one transaction."
+                : "You are about to purchase this item through the escrow smart contract."}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -380,10 +419,16 @@ const MarketplaceDetail = () => {
               <span className="font-semibold">{metadata?.name ?? "Luxury Item"}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-gray-500">Price</span>
+              <span className="text-gray-500">Listing price</span>
               <span className="font-bold text-purple-600 text-lg">{priceApt} APT</span>
             </div>
-            {priceUsd && (
+            {purchaseWithLpt && (
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500">You pay (LPT)</span>
+                <span className="font-bold text-purple-800 text-lg">{lptForListing} LPT</span>
+              </div>
+            )}
+            {priceUsd && !purchaseWithLpt && (
               <div className="flex items-center justify-between">
                 <span className="text-gray-500">USD equivalent</span>
                 <span className="text-gray-600">~{priceUsd}</span>
@@ -391,8 +436,19 @@ const MarketplaceDetail = () => {
             )}
             <Separator />
             <div className="p-3 bg-amber-50 rounded-lg text-sm text-amber-700">
-              This will transfer <strong>{priceApt} APT</strong> from your wallet.
-              The passport will be transferred to you atomically via the escrow contract.
+              {purchaseWithLpt ? (
+                <>
+                  At <strong>100 LPT per 1 APT</strong> (1 LPT = 0.01 APT), you send{" "}
+                  <strong>{lptForListing} LPT</strong> to the protocol treasury. The treasury moves{" "}
+                  <strong>{priceApt} APT</strong> into escrow, which immediately pays the seller; escrow only holds APT
+                  briefly. The treasury resource account must hold enough APT for the listing price.
+                </>
+              ) : (
+                <>
+                  This will transfer <strong>{priceApt} APT</strong> from your wallet. The passport will be
+                  transferred to you atomically via the escrow contract.
+                </>
+              )}
             </div>
           </div>
           <DialogFooter>
@@ -412,7 +468,7 @@ const MarketplaceDetail = () => {
               ) : (
                 <>
                   <ShoppingCart className="h-4 w-4 mr-2" />
-                  Confirm Purchase
+                  {purchaseWithLpt ? "Confirm LPT payment" : "Confirm Purchase"}
                 </>
               )}
             </Button>

@@ -31,13 +31,13 @@ import {
   MapPin,
   CheckCircle2,
   Clock,
-  AlertCircle,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useWallet } from "@aptos-labs/wallet-adapter-react";
 import { showSuccess, showError } from "@/utils/toast";
 import { fetchListingsByStatusMap } from "@/utils/listings";
+import { normalizeAptosAddress } from "@/utils/aptosAddress";
 import { octasToApt, aptToOctas, getAptUsdPrice, formatUsd } from "@/utils/price";
 import { LptPanel } from "@/components/LptPanel";
 
@@ -156,7 +156,8 @@ const UserDashboard = () => {
   // Marketplace – list state
   const [listPassportAddr, setListPassportAddr] = useState("");
   const [isListing, setIsListing]               = useState(false);
-  const [isListingNoPassport, setIsListingNoPassport] = useState(false);
+  /** No-passport listing: on-chain stake (APT or LPT) before verification / mint. */
+  const [noPassportFlow, setNoPassportFlow] = useState<null | "apt" | "lpt">(null);
 
   // Marketplace – my listings state
   const [myListings, setMyListings]             = useState<ListingRequest[]>([]);
@@ -245,11 +246,18 @@ const UserDashboard = () => {
   const fetchMyListings = async () => {
     setListingsLoading(true);
     try {
-      // Fetch all non-returned listing statuses for the current user
       const byStatus = await fetchListingsByStatusMap({ baseUrl: BASE_URL, accessToken });
-      // Filter to only listings owned by this user
       const all: ListingRequest[] = Object.values(byStatus).flat();
-      const mine = all.filter(l => l.owner_address === user?.walletAddress);
+      const wallet = user?.walletAddress;
+      // `owner_address` is updated to the buyer when a sale completes, so sold rows would
+      // otherwise appear here alongside My Passports. This tab is the seller pipeline only.
+      const mine = wallet
+        ? all.filter(
+            (l) =>
+              normalizeAptosAddress(l.owner_address) === normalizeAptosAddress(wallet) &&
+              l.status !== "sold"
+          )
+        : [];
       setMyListings(mine);
     } catch { showError("Failed to fetch listings"); }
     finally { setListingsLoading(false); }
@@ -415,9 +423,12 @@ const UserDashboard = () => {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ passportObjectAddress: listPassportAddr }),
       });
-      if (!prepRes.ok) { showError("Failed to prepare listing"); return; }
-      const prepData = await prepRes.json();
-      if (!prepData.success || !prepData.payload) throw new Error("Invalid prepare response");
+      const prepData = await prepRes.json().catch(() => ({} as { success?: boolean; error?: string; payload?: unknown }));
+      if (!prepRes.ok || !prepData.success) {
+        showError(typeof prepData.error === "string" ? prepData.error : "Failed to prepare listing");
+        return;
+      }
+      if (!prepData.payload) throw new Error("Invalid prepare response");
 
       // Step 2: sign & submit on-chain
       const txRes = await signAndSubmitTransaction({
@@ -444,25 +455,81 @@ const UserDashboard = () => {
     } finally { setIsListing(false); }
   };
 
-  // ── LIST WITHOUT PASSPORT ─────────────────────────────────────────────────────
+  // ── LIST WITHOUT PASSPORT (on-chain deposit) ─────────────────────────────────
 
-  const handleListWithoutPassport = async () => {
-    setIsListingNoPassport(true);
+  const assertWalletMatchesLogin = () => {
+    const connectedWalletAddress = getAddressString(account).toLowerCase();
+    const authenticatedWalletAddress = user?.walletAddress?.toLowerCase() ?? "";
+    if (!accessToken) {
+      throw new Error("Please log in first.");
+    }
+    if (!connectedWalletAddress) {
+      throw new Error("Please connect your wallet.");
+    }
+    if (authenticatedWalletAddress && connectedWalletAddress !== authenticatedWalletAddress) {
+      throw new Error("Connected wallet must match the wallet you logged in with.");
+    }
+  };
+
+  const submitNoPassportListDeposit = async (
+    flow: "apt" | "lpt",
+    preparePath: string,
+    recordPath: string,
+  ) => {
+    setNoPassportFlow(flow);
     try {
-      const res = await fetch(`${BASE_URL}/api/passports/list/no-passport-record`, {
+      assertWalletMatchesLogin();
+      const prepRes = await fetch(`${BASE_URL}${preparePath}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
       });
-      if (res.ok) {
-        const data = await res.json();
-        showSuccess(`Listing submitted! LuxPass will verify your item. Ref: ${data.tempObjectAddress?.substring(0, 16)}...`);
-        setTimeout(() => fetchMyListings(), 1500);
-      } else {
-        showError("Failed to submit listing request");
+      const prepData = await prepRes.json().catch(() => ({} as { success?: boolean; error?: string; payload?: { function: string; functionArguments: unknown[] } }));
+      if (!prepRes.ok || !prepData.success || !prepData.payload) {
+        throw new Error(typeof prepData.error === "string" ? prepData.error : "Failed to prepare listing deposit.");
       }
-    } catch { showError("Network error"); }
-    finally { setIsListingNoPassport(false); }
+      const txRes = await signAndSubmitTransaction({
+        data: {
+          function: prepData.payload.function as `${string}::${string}::${string}`,
+          functionArguments: prepData.payload.functionArguments as never[],
+        },
+        options: { maxGasAmount: 100_000, gasUnitPrice: 100, expirationSecondsFromNow: 600 },
+      });
+      const recRes = await fetch(`${BASE_URL}${recordPath}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ txHash: txRes.hash }),
+      });
+      const recData = await recRes.json().catch(() => ({}));
+      if (!recRes.ok || !recData.success) {
+        throw new Error(typeof recData.error === "string" ? recData.error : "On-chain deposit succeeded but recording the listing failed. Contact support with your tx hash.");
+      }
+      showSuccess(`Listing submitted! Ref: ${String(recData.tempObjectAddress).substring(0, 16)}...`);
+      setTimeout(() => fetchMyListings(), 1500);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Listing deposit failed.";
+      if (message.toLowerCase().includes("rejected")) {
+        showError("Transaction cancelled by wallet.");
+      } else {
+        showError(message);
+      }
+    } finally {
+      setNoPassportFlow(null);
+    }
   };
+
+  const handleListWithoutPassportBurnApt = () =>
+    submitNoPassportListDeposit(
+      "apt",
+      "/api/passports/list/no-passport/prepare-burn",
+      "/api/passports/list/no-passport/record-burn",
+    );
+
+  const handleListWithoutPassportBurnLpt = () =>
+    submitNoPassportListDeposit(
+      "lpt",
+      "/api/passports/list/no-passport/prepare-burn-lpt",
+      "/api/passports/list/no-passport/record-burn-lpt",
+    );
 
   // ── DELIST REQUEST ────────────────────────────────────────────────────────────
 
@@ -612,6 +679,12 @@ const UserDashboard = () => {
               {user?.role}
             </Badge>
             <Link to="/verify"><Button variant="outline">Verify Product</Button></Link>
+            <Link to="/marketplace">
+              <Button variant="outline" className="gap-1.5">
+                <Store className="h-4 w-4" />
+                Browse marketplace
+              </Button>
+            </Link>
             <Link to="/dashboard"><Button variant="outline">Dashboard</Button></Link>
           </div>
         </div>
@@ -821,30 +894,30 @@ const UserDashboard = () => {
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <div className="grid md:grid-cols-2 gap-6">
+                    <div className="grid md:grid-cols-2 md:items-stretch gap-6">
 
-                      {/* With passport */}
-                      <div className="border rounded-lg p-5 bg-purple-50/50 space-y-4">
+                      {/* With passport — gap-4 sections line up with right column */}
+                      <div className="flex h-full flex-col gap-4 rounded-lg border bg-purple-50/50 p-5">
                         <div>
                           <h3 className="font-semibold text-gray-900 mb-1">I have a LuxPass Passport</h3>
                           <p className="text-sm text-gray-600">
                             Using existing on-chain passport. You'll sign a transaction to mark it as STORING, then ship it to LuxPass.
                           </p>
                         </div>
-                        <div>
+                        <div className="grid gap-1">
                           <Label htmlFor="listPassportAddr">Passport Object Address</Label>
                           <Input
                             id="listPassportAddr"
                             placeholder="0x..."
                             value={listPassportAddr}
                             onChange={e => setListPassportAddr(e.target.value)}
-                            className="mt-1"
+                            className="h-10"
                           />
                         </div>
                         <Button
                           onClick={handleListWithPassport}
                           disabled={isListing || !listPassportAddr.trim()}
-                          className="w-full bg-purple-600 hover:bg-purple-700"
+                          className="h-10 w-full bg-purple-600 hover:bg-purple-700"
                         >
                           {isListing ? (
                             <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Submitting...</>
@@ -854,29 +927,39 @@ const UserDashboard = () => {
                         </Button>
                       </div>
 
-                      {/* Without passport */}
-                      <div className="border rounded-lg p-5 bg-blue-50/50 space-y-4">
+                      {/* Without passport — "Ship your product with:" mirrors Passport Object Address; APT row = input row; LPT = List with Passport */}
+                      <div className="flex h-full flex-col gap-4 rounded-lg border bg-blue-50/50 p-5">
                         <div>
                           <h3 className="font-semibold text-gray-900 mb-1">I don't have a Passport yet</h3>
                           <p className="text-sm text-gray-600">
                             Ship your product to LuxPass. Our admin team will physically verify it and mint a new passport on your behalf.
                           </p>
                         </div>
-                        <div className="p-3 bg-yellow-50 rounded-md border border-yellow-200">
-                          <p className="text-xs text-yellow-800">
-                            <AlertCircle className="inline mr-1 h-3 w-3" />
-                            No on-chain transaction needed — a listing request is created immediately.
-                          </p>
+                        <div className="grid gap-1">
+                          <Label htmlFor="no-passport-deposit-apt">Ship your product with:</Label>
+                          <Button
+                            id="no-passport-deposit-apt"
+                            onClick={handleListWithoutPassportBurnApt}
+                            disabled={noPassportFlow !== null}
+                            className="h-10 w-full bg-blue-600 hover:bg-blue-700"
+                          >
+                            {noPassportFlow === "apt" ? (
+                              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Signing deposit…</>
+                            ) : (
+                              <><Package className="mr-2 h-4 w-4" /> List without Passport (Stake APT)</>
+                            )}
+                          </Button>
                         </div>
                         <Button
-                          onClick={handleListWithoutPassport}
-                          disabled={isListingNoPassport}
-                          className="w-full bg-blue-600 hover:bg-blue-700"
+                          onClick={handleListWithoutPassportBurnLpt}
+                          disabled={noPassportFlow !== null}
+                          variant="secondary"
+                          className="h-10 w-full border-blue-300 bg-white hover:bg-blue-50"
                         >
-                          {isListingNoPassport ? (
-                            <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Submitting...</>
+                          {noPassportFlow === "lpt" ? (
+                            <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Signing deposit…</>
                           ) : (
-                            <><Package className="mr-2 h-4 w-4" /> List without Passport</>
+                            <><Wallet className="mr-2 h-4 w-4" /> List without Passport (Stake LPT)</>
                           )}
                         </Button>
                       </div>
@@ -893,7 +976,9 @@ const UserDashboard = () => {
                           <Truck className="mr-3 h-5 w-5 text-blue-600" />
                           My Listings ({myListings.length})
                         </CardTitle>
-                        <CardDescription>Track and manage your marketplace listings</CardDescription>
+                        <CardDescription>
+                          Track listings you are selling through LuxPass. Purchased items stay in My Passports only.
+                        </CardDescription>
                       </div>
                       <Button variant="outline" size="sm" onClick={fetchMyListings} disabled={listingsLoading}>
                         <RefreshCw className={`mr-2 h-4 w-4 ${listingsLoading ? "animate-spin" : ""}`} />

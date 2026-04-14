@@ -1,5 +1,5 @@
 import { makeAptosClient } from "../../../config/aptos";
-import { Account, Ed25519PrivateKey } from "@aptos-labs/ts-sdk";
+import { Account, AccountAddress, Ed25519PrivateKey } from "@aptos-labs/ts-sdk";
 import {
   lptFunction,
   LPT_STATE_ADDRESS,
@@ -40,6 +40,15 @@ function normaliseAddress(address: string, fieldName: string): string {
   }
 
   return normalised;
+}
+
+/** Chain `sender` is often long canon (`0x` + 64 hex); auth may store a shorter equivalent. */
+function sameAptosAddress(a: string, b: string): boolean {
+  try {
+    return AccountAddress.from(a).toStringLong() === AccountAddress.from(b).toStringLong();
+  } catch {
+    return false;
+  }
 }
 
 function parseAmount(value: unknown, fieldName = "amount"): bigint {
@@ -225,12 +234,12 @@ async function verifyAptPurchasePayment(params: {
     throw new Error("APT payment transaction was not successful.");
   }
 
-  const sender = normaliseAddress(String(tx.sender ?? ""), "payment sender");
-  if (sender !== buyerAddress) {
+  const senderRaw = String(tx.sender ?? "").trim();
+  if (!senderRaw || !sameAptosAddress(senderRaw, buyerAddress)) {
     console.error("[lpt:purchase-apt] payment sender mismatch", {
       paymentTransactionHash,
       expectedBuyer: buyerAddress,
-      actualSender: sender,
+      actualSender: senderRaw,
     });
     throw new Error("APT payment sender does not match authenticated wallet.");
   }
@@ -245,14 +254,14 @@ async function verifyAptPurchasePayment(params: {
   }
 
   const args = getPayloadArguments(tx.payload);
-  const recipient = normaliseAddress(String(args[0] ?? ""), "payment recipient");
+  const recipientRaw = String(args[0] ?? "").trim();
   const amountOctas = parseOnChainInteger(args[1], "payment amount");
 
-  if (recipient !== treasuryAddress) {
+  if (!recipientRaw || !sameAptosAddress(recipientRaw, treasuryAddress)) {
     console.error("[lpt:purchase-apt] payment treasury mismatch", {
       paymentTransactionHash,
       expectedTreasury: treasuryAddress,
-      actualRecipient: recipient,
+      actualRecipient: recipientRaw,
     });
     throw new Error("APT payment recipient does not match treasury wallet.");
   }
@@ -268,8 +277,8 @@ async function verifyAptPurchasePayment(params: {
 
   console.info("[lpt:purchase-apt] APT payment verified", {
     paymentTransactionHash,
-    sender,
-    recipient,
+    sender: senderRaw,
+    recipient: recipientRaw,
     amountOctas: amountOctas.toString(),
   });
 }

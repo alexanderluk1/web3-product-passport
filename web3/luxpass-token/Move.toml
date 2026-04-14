@@ -3,12 +3,14 @@ name = "LuxPassToken"
 version = "1.0.0"
 authors = []
 
+# Must match ProductPassport and your deploy wallet. Set at publish time, e.g.
+#   aptos move publish --named-addresses luxpass=0xYOUR_ADDR
 [addresses]
-luxpass = "0xc06d173e51c62a15d7b7ca69c3d3fee80b79f69e06153a2cca179ae71d831598"
+luxpass = "_"
 
 [dependencies.AptosFramework]
 git = "https://github.com/aptos-labs/aptos-framework.git"
-rev = "mainnet"
+rev = "devnet"
 subdir = "aptos-framework"
 
 [dev-dependencies]

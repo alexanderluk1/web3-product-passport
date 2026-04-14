@@ -304,6 +304,25 @@ export type submitListingRequestResponse =
       error: string;
     };
 
+export type PrepareNoPassportListingDepositResponse =
+  | {
+      success: true;
+      payload: { function: string; functionArguments: unknown[] };
+      feeSummary: {
+        lptBurn: string;
+        aptOctas?: string;
+        lptTreasuryFee?: string;
+      };
+    }
+  | {
+      success: false;
+      error: string;
+    };
+
+export type RecordNoPassportListingDepositBody = {
+  txHash: string;
+};
+
 export type UpdateNoPassportListingRequestBody = {
   tempObjectAddress: string;
   status?: string;

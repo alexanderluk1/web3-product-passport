@@ -24,6 +24,10 @@ import {
   recordConfirmReceiptHandler,
   approveDelistHandler,
   requestListingNoPassport,
+  prepareNoPassportListBurnHandler,
+  recordNoPassportListBurnHandler,
+  prepareNoPassportListBurnLptHandler,
+  recordNoPassportListBurnLptHandler,
   receiveNoPassportHandler,
   receivePassportHandler,
   verifyPassportHandler,
@@ -136,6 +140,26 @@ passportRouter.post("/list/passport-record",
 passportRouter.post("/list/no-passport-record",
     requireAuth,
     requestListingNoPassport
+);
+
+passportRouter.post("/list/no-passport/prepare-burn",
+    requireAuth,
+    prepareNoPassportListBurnHandler
+);
+
+passportRouter.post("/list/no-passport/record-burn",
+    requireAuth,
+    recordNoPassportListBurnHandler
+);
+
+passportRouter.post("/list/no-passport/prepare-burn-lpt",
+    requireAuth,
+    prepareNoPassportListBurnLptHandler
+);
+
+passportRouter.post("/list/no-passport/record-burn-lpt",
+    requireAuth,
+    recordNoPassportListBurnLptHandler
 );
 
 passportRouter.post("/receive/no-passport",

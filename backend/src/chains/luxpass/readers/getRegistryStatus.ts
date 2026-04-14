@@ -6,16 +6,27 @@ function normalizeAddress(address: string): string {
   return address.trim().toLowerCase();
 }
 
-function isRegistryNotFoundError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
+function collectErrorText(error: unknown): string {
+  const parts: string[] = [];
+  if (error instanceof Error) {
+    parts.push(error.message);
+  } else {
+    parts.push(String(error ?? ""));
   }
+  const data = (error as { data?: { message?: unknown } })?.data;
+  if (data && typeof data.message === "string") {
+    parts.push(data.message);
+  }
+  return parts.join(" ");
+}
 
-  const message = error.message.toLowerCase();
+function isRegistryNotFoundError(error: unknown): boolean {
+  const message = collectErrorText(error).toLowerCase();
 
   return (
     message.includes("registry_not_found") ||
     message.includes("e_registry_not_found") ||
+    message.includes("abort code: 3") ||
     message.includes("resource_not_found") ||
     message.includes("does not exist") ||
     message.includes("move_abort")

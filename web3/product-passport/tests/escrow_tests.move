@@ -10,7 +10,9 @@ module luxpass::escrow_tests {
 
     use luxpass::escrow;
     use luxpass::issuer_registry;
+    use luxpass::lux_pass_token;
     use luxpass::passport;
+    use luxpass::protocol_treasury;
 
     // Mirror of passport status constants
     const STATUS_ACTIVE: u8  = 1;
@@ -278,6 +280,10 @@ module luxpass::escrow_tests {
         // Verify passport transferred to buyer
         assert!(object::is_owner(passport_obj, buyer_addr), 0);
 
+        // Secondary sale must leave passport ACTIVE so buyer can `list_passport` again
+        let (_, _, _, _, status, _, _) = passport::get_passport(passport_addr);
+        assert!(status == STATUS_ACTIVE, 5);
+
         // Verify APT transferred
         let seller_bal_after = coin::balance<aptos_coin::AptosCoin>(seller_addr);
         let buyer_bal_after = coin::balance<aptos_coin::AptosCoin>(buyer_addr);
@@ -290,6 +296,122 @@ module luxpass::escrow_tests {
 
         // Verify volume tracked
         assert!(escrow::get_total_volume(admin_addr) == (price as u128), 4);
+    }
+
+    // LPT purchase path: buyer pays LPT to treasury; seller receives APT from escrow float.
+    #[test(aptos_framework = @aptos_framework, admin = @luxpass, seller = @0xA, buyer = @0xB)]
+    fun test_purchase_with_lpt_success(
+        aptos_framework: &signer,
+        admin: &signer,
+        seller: &signer,
+        buyer: &signer,
+    ) {
+        timestamp::set_time_has_started_for_testing(aptos_framework);
+
+        let admin_addr = signer::address_of(admin);
+        let seller_addr = signer::address_of(seller);
+        let buyer_addr = signer::address_of(buyer);
+
+        account::create_account_for_test(admin_addr);
+        account::create_account_for_test(seller_addr);
+        account::create_account_for_test(buyer_addr);
+
+        let (burn_cap, mint_cap) = aptos_coin::initialize_for_test(aptos_framework);
+        coin::register<aptos_coin::AptosCoin>(admin);
+        coin::register<aptos_coin::AptosCoin>(seller);
+        coin::register<aptos_coin::AptosCoin>(buyer);
+
+        let buyer_coins = coin::mint<aptos_coin::AptosCoin>(10 * ONE_APT, &mint_cap);
+        coin::deposit(buyer_addr, buyer_coins);
+        let seller_coins = coin::mint<aptos_coin::AptosCoin>(5 * ONE_APT, &mint_cap);
+        coin::deposit(seller_addr, seller_coins);
+
+        issuer_registry::init_registry(admin);
+        issuer_registry::add_issuer(admin, admin_addr);
+        passport::init_events(admin);
+        passport::init_index(admin);
+        lux_pass_token::initialise(admin, 1, 1);
+        escrow::init_escrow(admin, admin_addr);
+        protocol_treasury::init_protocol_treasury(admin, admin_addr);
+
+        let treasury_addr = protocol_treasury::get_treasury_address(admin_addr);
+        let treasury_float = coin::mint<aptos_coin::AptosCoin>(50 * ONE_APT, &mint_cap);
+        coin::deposit(treasury_addr, treasury_float);
+
+        lux_pass_token::mint(admin, admin_addr, buyer_addr, 10_000);
+
+        let passport_addr = mint_listed_passport(admin, admin_addr, seller_addr, b"SN-LPT");
+        let passport_obj = object::address_to_object<passport::Passport>(passport_addr);
+        let price = 2 * ONE_APT;
+        escrow::create_listing(seller, passport_obj, admin_addr, price);
+
+        let seller_bal_before = coin::balance<aptos_coin::AptosCoin>(seller_addr);
+        let treasury_lpt_before = lux_pass_token::balance_of(admin_addr, treasury_addr);
+
+        escrow::purchase_with_lpt(buyer, passport_addr, admin_addr, admin_addr);
+
+        assert!(object::is_owner(passport_obj, buyer_addr), 0);
+        let (_, _, _, _, status, _, _) = passport::get_passport(passport_addr);
+        assert!(status == STATUS_ACTIVE, 1);
+
+        let seller_bal_after = coin::balance<aptos_coin::AptosCoin>(seller_addr);
+        assert!(seller_bal_after == seller_bal_before + price, 2);
+
+        // 2 APT -> 200 LPT at 100 LPT / APT
+        let treasury_lpt_after = lux_pass_token::balance_of(admin_addr, treasury_addr);
+        assert!(treasury_lpt_after == treasury_lpt_before + 200, 3);
+
+        let (_, _, _, is_active) = escrow::get_listing(admin_addr, passport_addr);
+        assert!(is_active == false, 4);
+
+        coin::destroy_burn_cap(burn_cap);
+        coin::destroy_mint_cap(mint_cap);
+    }
+
+    #[test(aptos_framework = @aptos_framework, admin = @luxpass, seller = @0xA, buyer = @0xB)]
+    #[expected_failure(abort_code = protocol_treasury::E_TREASURY_INSUFFICIENT_APT)]
+    fun test_purchase_with_lpt_fails_without_treasury_apt(
+        aptos_framework: &signer,
+        admin: &signer,
+        seller: &signer,
+        buyer: &signer,
+    ) {
+        timestamp::set_time_has_started_for_testing(aptos_framework);
+
+        let admin_addr = signer::address_of(admin);
+        let seller_addr = signer::address_of(seller);
+        let buyer_addr = signer::address_of(buyer);
+
+        account::create_account_for_test(admin_addr);
+        account::create_account_for_test(seller_addr);
+        account::create_account_for_test(buyer_addr);
+
+        let (burn_cap, mint_cap) = aptos_coin::initialize_for_test(aptos_framework);
+        coin::register<aptos_coin::AptosCoin>(admin);
+        coin::register<aptos_coin::AptosCoin>(seller);
+        coin::register<aptos_coin::AptosCoin>(buyer);
+
+        let buyer_coins = coin::mint<aptos_coin::AptosCoin>(10 * ONE_APT, &mint_cap);
+        coin::deposit(buyer_addr, buyer_coins);
+        coin::destroy_burn_cap(burn_cap);
+        coin::destroy_mint_cap(mint_cap);
+
+        issuer_registry::init_registry(admin);
+        issuer_registry::add_issuer(admin, admin_addr);
+        passport::init_events(admin);
+        passport::init_index(admin);
+        lux_pass_token::initialise(admin, 1, 1);
+        escrow::init_escrow(admin, admin_addr);
+        protocol_treasury::init_protocol_treasury(admin, admin_addr);
+        // Treasury has no APT — purchase_with_lpt must abort when forwarding APT to escrow
+
+        lux_pass_token::mint(admin, admin_addr, buyer_addr, 10_000);
+
+        let passport_addr = mint_listed_passport(admin, admin_addr, seller_addr, b"SN-NOAPT");
+        let passport_obj = object::address_to_object<passport::Passport>(passport_addr);
+        escrow::create_listing(seller, passport_obj, admin_addr, ONE_APT);
+
+        escrow::purchase_with_lpt(buyer, passport_addr, admin_addr, admin_addr);
     }
 
     #[test(aptos_framework = @aptos_framework, admin = @luxpass, seller = @0xA, buyer = @0xB)]

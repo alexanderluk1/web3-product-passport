@@ -11,6 +11,8 @@ module luxpass::escrow {
 
     use luxpass::passport::{Self, Passport};
     use luxpass::issuer_registry;
+    use luxpass::lux_pass_token;
+    use luxpass::protocol_treasury;
 
     // ── Error codes (100-series to avoid collision with passport 1-21) ──
 
@@ -24,6 +26,14 @@ module luxpass::escrow {
     const E_INVALID_PRICE: u64          = 107;
     const E_NOT_ACTIVE: u64             = 108;
     const E_SELF_PURCHASE: u64          = 110;
+    /// Listing price in octas yields 0 LPT at fixed rate (too small).
+    const E_LPT_AMOUNT_ZERO: u64        = 112;
+    /// Call `protocol_treasury::init_protocol_treasury` before LPT purchases.
+    const E_PROTOCOL_TREASURY_NOT_INIT: u64 = 113;
+
+    /// 1 APT = 10^8 octas; fixed rate 1 APT = 100 LPT => LPT = price_octas * 100 / 10^8.
+    const OCTAS_PER_APT: u64 = 100_000_000;
+    const LPT_PER_APT: u64   = 100;
 
     // Passport status constant (must match passport.move)
     const STATUS_LISTING: u8 = 6;
@@ -223,11 +233,69 @@ module luxpass::escrow {
         let escrow_signer = account::create_signer_with_capability(&state.signer_cap);
         aptos_account::transfer(&escrow_signer, seller_addr, price);
 
+        // 2b. Listing flow left the passport at STATUS_LISTING; new owner must see ACTIVE to list again.
+        passport::set_active_for_escrow_sale(passport_addr);
+
         // 3. Transfer passport: escrow → buyer
         let passport_obj = object::address_to_object<Passport>(passport_addr);
         passport::transfer(&escrow_signer, passport_obj, buyer_addr, registry_addr);
 
         // Emit event
+        let ev = borrow_global_mut<EscrowEvents>(admin_addr);
+        event::emit_event(&mut ev.purchase_completed, PurchaseCompleted {
+            passport: passport_addr,
+            seller: seller_addr,
+            buyer: buyer_addr,
+            price_octas: price,
+        });
+    }
+
+    /// Buyer pays LPT to the protocol treasury resource account at **100 LPT per 1 APT** of listing price.
+    /// Treasury forwards **APT** to the escrow account, then escrow pays the seller (transient APT on escrow).
+    /// Fund APT on the treasury resource address (`protocol_treasury::get_treasury_address`).
+    public entry fun purchase_with_lpt(
+        buyer: &signer,
+        passport_addr: address,
+        admin_addr: address,
+        lpt_state_addr: address,
+    ) acquires EscrowState, EscrowEvents {
+        assert!(exists<EscrowState>(admin_addr), E_NOT_INITIALIZED);
+        let buyer_addr = signer::address_of(buyer);
+
+        let state = borrow_global_mut<EscrowState>(admin_addr);
+        assert!(table::contains(&state.listings, passport_addr), E_LISTING_NOT_FOUND);
+        let listing = table::borrow_mut(&mut state.listings, passport_addr);
+        assert!(listing.is_active, E_NOT_ACTIVE);
+        assert!(buyer_addr != listing.seller, E_SELF_PURCHASE);
+
+        let price = listing.price_octas;
+        let seller_addr = listing.seller;
+        let escrow_address = state.escrow_address;
+        let registry_addr = state.registry_addr;
+
+        let lpt_u128 = (price as u128) * (LPT_PER_APT as u128) / (OCTAS_PER_APT as u128);
+        assert!(lpt_u128 > 0, E_LPT_AMOUNT_ZERO);
+        let lpt_amount = (lpt_u128 as u64);
+
+        listing.is_active = false;
+        state.listing_count = state.listing_count - 1;
+        state.total_volume_octas = state.total_volume_octas + (price as u128);
+
+        assert!(protocol_treasury::is_initialized(admin_addr), E_PROTOCOL_TREASURY_NOT_INIT);
+        let lpt_sink = protocol_treasury::lpt_sink_address(admin_addr);
+
+        // 1. LPT: buyer -> protocol treasury resource account
+        lux_pass_token::transfer_from_signer(buyer, lpt_state_addr, lpt_sink, lpt_amount);
+
+        // 2. APT: protocol treasury -> escrow (transient), then escrow -> seller
+        protocol_treasury::transfer_apt_to(admin_addr, escrow_address, price);
+        let escrow_signer = account::create_signer_with_capability(&state.signer_cap);
+        aptos_account::transfer(&escrow_signer, seller_addr, price);
+
+        passport::set_active_for_escrow_sale(passport_addr);
+        let passport_obj = object::address_to_object<Passport>(passport_addr);
+        passport::transfer(&escrow_signer, passport_obj, buyer_addr, registry_addr);
+
         let ev = borrow_global_mut<EscrowEvents>(admin_addr);
         event::emit_event(&mut ev.purchase_completed, PurchaseCompleted {
             passport: passport_addr,

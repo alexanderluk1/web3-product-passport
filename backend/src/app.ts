@@ -91,6 +91,10 @@ export function createApp() {
           "POST /api/passports/list/passport-prepare", // (Sets status to STORING)
           "POST /api/passports/list/passport-record",
           "POST /api/passports/list/no-passport-record",// (Submit listing request without passport, sets database listing to pending)
+          "POST /api/passports/list/no-passport/prepare-burn",
+          "POST /api/passports/list/no-passport/record-burn",
+          "POST /api/passports/list/no-passport/prepare-burn-lpt",
+          "POST /api/passports/list/no-passport/record-burn-lpt",
           
           // Admin Verification & Receiving
           "POST /api/passports/receive/no-passport", // (Requires ADMIN, database status to status -> verifying)

@@ -1,6 +1,7 @@
 import {
   ESCROW_CREATE_LISTING_FN,
   ESCROW_PURCHASE_FN,
+  ESCROW_PURCHASE_WITH_LPT_FN,
   ESCROW_CANCEL_LISTING_FN,
   ESCROW_UPDATE_PRICE_FN,
   ESCROW_ADMIN_CANCEL_FN,
@@ -35,6 +36,21 @@ export function buildEscrowPurchasePayload(params: {
     functionArguments: [
       params.passportObjectAddress,
       params.adminAddress,
+    ],
+  };
+}
+
+export function buildEscrowPurchaseWithLptPayload(params: {
+  passportObjectAddress: string;
+  adminAddress: string;
+  lptStateAddress: string;
+}): PreparedEscrowPayload {
+  return {
+    function: ESCROW_PURCHASE_WITH_LPT_FN,
+    functionArguments: [
+      params.passportObjectAddress,
+      params.adminAddress,
+      params.lptStateAddress,
     ],
   };
 }

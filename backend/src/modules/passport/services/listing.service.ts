@@ -12,6 +12,7 @@ import {
   RecordListPassportRequestBody,
   RecordListPassportResponse,
   submitListingRequestResponse,
+  PrepareNoPassportListingDepositResponse,
   UpdateNoPassportListingRequestBody,
   UpdateNoPassportListingResponse,
   PrepareMintListPassportRequestBody,
@@ -39,6 +40,9 @@ import {
   PASSPORT_SET_STATUS_FN,
   PASSPORT_UPDATE_METADATA_FN,
   PASSPORT_LIST_FN,
+  STATUS_ACTIVE,
+  STATUS_SUSPENDED,
+  STATUS_REVOKED,
   STATUS_STORING,
   STATUS_VERIFYING,
   STATUS_LISTING,
@@ -65,6 +69,15 @@ import {
   getDelistRequest,
 } from "../repository/listing_repository";
 import {
+  buildListBurnLptPayload,
+  buildListBurnPayload,
+  getNoPassportListingBurnConfig,
+  markNoPassportDepositTxUsed,
+  assertNoPassportDepositTxFresh,
+  verifyListBurnLptTx,
+  verifyListBurnTx,
+} from "./noPassportListingDeposit";
+import {
   NORMALIZED_REGISTRY,
   buildPassportMetadata,
   ensurePassportInfrastructureInitialized,
@@ -75,6 +88,28 @@ import {
 } from "./passport.service.helpers";
 
 const aptos = makeAptosClient();
+
+/** Human-readable passport status for list_passport preflight (on-chain requires Active). */
+function passportOnChainStatusLabel(status: number): string {
+  switch (status) {
+    case STATUS_ACTIVE:
+      return "Active";
+    case STATUS_SUSPENDED:
+      return "Suspended";
+    case STATUS_REVOKED:
+      return "Revoked";
+    case STATUS_STORING:
+      return "Storing";
+    case STATUS_VERIFYING:
+      return "Verifying";
+    case STATUS_LISTING:
+      return "Listing";
+    case STATUS_RETURNING:
+      return "Returning";
+    default:
+      return `code ${status}`;
+  }
+}
 
 const listingStatusMap: Record<number, ListingRequestStatus> = {
   [STATUS_STORING]: "pending",
@@ -311,8 +346,22 @@ export const listingService = {
       };
     }
 
+    if (!passport) {
+      return {
+        success: false,
+        error: "Passport not found. Check the passport object address.",
+      };
+    }
+
     if (!passport.transferable) {
       return { success: false, error: "This passport is not transferable." };
+    }
+
+    if (passport.status !== STATUS_ACTIVE) {
+      return {
+        success: false,
+        error: `Cannot list: on-chain list_passport requires status Active (E_NOT_TRANSFERABLE otherwise). Current status: ${passportOnChainStatusLabel(passport.status)}.`,
+      };
     }
 
     const normalizedCaller = normalizeAddress(callerWalletAddress);
@@ -397,6 +446,114 @@ export const listingService = {
         success: false,
         error: "Failed to submit listing request. Please try again later." + err,
       };
+    }
+  },
+
+  async prepareNoPassportListBurn(params: {
+    callerWalletAddress: string;
+  }): Promise<PrepareNoPassportListingDepositResponse> {
+    try {
+      validateWalletAddress(params.callerWalletAddress, "caller wallet address");
+      await ensurePassportInfrastructureInitialized();
+      const cfg = getNoPassportListingBurnConfig();
+      const payload = buildListBurnPayload();
+      return {
+        success: true,
+        payload: {
+          function: payload.function,
+          functionArguments: [...payload.functionArguments],
+        },
+        feeSummary: {
+          lptBurn: cfg.lptBurnAmount.toString(),
+          aptOctas: cfg.aptAmountOctas.toString(),
+        },
+      };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Failed to prepare listing deposit.";
+      return { success: false, error: msg };
+    }
+  },
+
+  async recordNoPassportListBurn(params: {
+    callerWalletAddress: string;
+    txHash: string;
+  }): Promise<submitListingRequestResponse> {
+    const { callerWalletAddress, txHash } = params;
+    validateWalletAddress(callerWalletAddress, "caller wallet address");
+    const normalizedCaller = normalizeAddress(callerWalletAddress);
+
+    try {
+      await ensurePassportInfrastructureInitialized();
+      assertNoPassportDepositTxFresh(txHash);
+      await verifyListBurnTx({
+        aptos,
+        paymentTransactionHash: txHash,
+        buyerAddress: normalizedCaller,
+      });
+      const listing = await createListingRequest(false, normalizedCaller);
+      markNoPassportDepositTxUsed(txHash);
+      return {
+        success: true,
+        message: "Listing request submitted after APT stake (on-chain deposit).",
+        tempObjectAddress: listing.passport_object_address ?? "",
+      };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to record listing deposit.";
+      return { success: false, error: msg };
+    }
+  },
+
+  async prepareNoPassportListBurnLpt(params: {
+    callerWalletAddress: string;
+  }): Promise<PrepareNoPassportListingDepositResponse> {
+    try {
+      validateWalletAddress(params.callerWalletAddress, "caller wallet address");
+      await ensurePassportInfrastructureInitialized();
+      const cfg = getNoPassportListingBurnConfig();
+      const payload = buildListBurnLptPayload();
+      return {
+        success: true,
+        payload: {
+          function: payload.function,
+          functionArguments: [...payload.functionArguments],
+        },
+        feeSummary: {
+          lptBurn: cfg.lptBurnAmount.toString(),
+          lptTreasuryFee: cfg.lptGasFeeAmount.toString(),
+        },
+      };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Failed to prepare listing deposit.";
+      return { success: false, error: msg };
+    }
+  },
+
+  async recordNoPassportListBurnLpt(params: {
+    callerWalletAddress: string;
+    txHash: string;
+  }): Promise<submitListingRequestResponse> {
+    const { callerWalletAddress, txHash } = params;
+    validateWalletAddress(callerWalletAddress, "caller wallet address");
+    const normalizedCaller = normalizeAddress(callerWalletAddress);
+
+    try {
+      await ensurePassportInfrastructureInitialized();
+      assertNoPassportDepositTxFresh(txHash);
+      await verifyListBurnLptTx({
+        aptos,
+        paymentTransactionHash: txHash,
+        buyerAddress: normalizedCaller,
+      });
+      const listing = await createListingRequest(false, normalizedCaller);
+      markNoPassportDepositTxUsed(txHash);
+      return {
+        success: true,
+        message: "Listing request submitted after LPT stake (on-chain deposit).",
+        tempObjectAddress: listing.passport_object_address ?? "",
+      };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to record listing deposit.";
+      return { success: false, error: msg };
     }
   },
 

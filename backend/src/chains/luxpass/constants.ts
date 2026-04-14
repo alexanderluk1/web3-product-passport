@@ -32,12 +32,19 @@ export const STATUS_RETURNING = 7;
 // Escrow module
 export const ESCROW_CREATE_LISTING_FN   = `${MODULE_ADDRESS}::escrow::create_listing`;
 export const ESCROW_PURCHASE_FN         = `${MODULE_ADDRESS}::escrow::purchase`;
+export const ESCROW_PURCHASE_WITH_LPT_FN = `${MODULE_ADDRESS}::escrow::purchase_with_lpt`;
+export const PROTOCOL_TREASURY_INIT_FN = `${MODULE_ADDRESS}::protocol_treasury::init_protocol_treasury`;
+export const PROTOCOL_TREASURY_GET_ADDRESS_FN = `${MODULE_ADDRESS}::protocol_treasury::get_treasury_address`;
 export const ESCROW_CANCEL_LISTING_FN   = `${MODULE_ADDRESS}::escrow::cancel_listing`;
 export const ESCROW_UPDATE_PRICE_FN     = `${MODULE_ADDRESS}::escrow::update_price`;
 export const ESCROW_ADMIN_CANCEL_FN     = `${MODULE_ADDRESS}::escrow::admin_cancel_listing`;
 export const ESCROW_INIT_FN             = `${MODULE_ADDRESS}::escrow::init_escrow`;
 export const ESCROW_GET_LISTING_FN      = `${MODULE_ADDRESS}::escrow::get_listing`;
 export const ESCROW_GET_ADDRESS_FN      = `${MODULE_ADDRESS}::escrow::get_escrow_address`;
+
+/** User-paid no-passport listing deposits (burn + APT or burn + LPT fee). */
+export const PASSPORT_LIST_BURN_FN = `${MODULE_ADDRESS}::passport::list_burn`;
+export const PASSPORT_LIST_BURN_LPT_FN = `${MODULE_ADDRESS}::passport::list_burn_lpt`;
 
 // Escrow events
 export const ESCROW_PURCHASE_COMPLETED_EV = `${MODULE_ADDRESS}::escrow::PurchaseCompleted`;

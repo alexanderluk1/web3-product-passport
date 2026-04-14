@@ -4,6 +4,7 @@ import { getPassportOwner } from "../../../chains/luxpass/readers/getPassportOwn
 import {
   buildEscrowCreateListingPayload,
   buildEscrowPurchasePayload,
+  buildEscrowPurchaseWithLptPayload,
   buildEscrowCancelListingPayload,
   buildEscrowUpdatePricePayload,
 } from "../../../chains/luxpass/writers/escrowPayloadBuilders";
@@ -12,9 +13,11 @@ import {
   STATUS_LISTING,
   ESCROW_CREATE_LISTING_FN,
   ESCROW_PURCHASE_FN,
+  ESCROW_PURCHASE_WITH_LPT_FN,
   ESCROW_CANCEL_LISTING_FN,
   ESCROW_PURCHASE_COMPLETED_EV,
 } from "../../../chains/luxpass/constants";
+import { LPT_STATE_ADDRESS } from "../../../chains/luxpasstoken/constants";
 import { normalizeAddress } from "../../../utils/walletHelper";
 import {
   getListingRequest,
@@ -33,6 +36,12 @@ import { validateRecordedTransaction, NORMALIZED_REGISTRY } from "./passport.ser
 import type { MarketplaceListing } from "../types/escrow.types";
 
 const aptos = makeAptosClient();
+
+/** Fixed on-chain rate: 100 LPT per 1 APT of listing price (1 LPT = 0.01 APT). */
+export function lptAmountFromPriceOctas(priceOctas: string): bigint {
+  const p = BigInt(priceOctas);
+  return (p * 100n) / 100_000_000n;
+}
 
 export const escrowService = {
   // ─── Seller: prepare create_listing tx ──────────────────────────
@@ -128,6 +137,47 @@ export const escrowService = {
     };
   },
 
+  // ─── Buyer: prepare purchase tx (LPT → protocol treasury; treasury → escrow → seller APT) ──
+  async preparePurchaseWithLpt(params: {
+    callerWalletAddress: string;
+    passportObjectAddress: string;
+  }) {
+    const buyerAddr = normalizeAddress(params.callerWalletAddress);
+    const passportAddr = normalizeAddress(params.passportObjectAddress);
+
+    const escrowListing = await getEscrowListing(aptos, NORMALIZED_REGISTRY, passportAddr);
+    if (!escrowListing || !escrowListing.isActive) {
+      return { success: false as const, error: "Escrow listing not found or inactive." };
+    }
+
+    if (normalizeAddress(escrowListing.seller) === buyerAddr) {
+      return { success: false as const, error: "You cannot purchase your own listing." };
+    }
+
+    const lpt = lptAmountFromPriceOctas(escrowListing.priceOctas);
+    if (lpt <= 0n) {
+      return {
+        success: false as const,
+        error: "Listing price is too small for an LPT payment at the fixed conversion rate.",
+      };
+    }
+
+    const lptState = normalizeAddress(LPT_STATE_ADDRESS);
+
+    const payload = buildEscrowPurchaseWithLptPayload({
+      passportObjectAddress: passportAddr,
+      adminAddress: NORMALIZED_REGISTRY,
+      lptStateAddress: lptState,
+    });
+
+    return {
+      success: true as const,
+      payload,
+      priceOctas: escrowListing.priceOctas,
+      lptAmount: lpt.toString(),
+    };
+  },
+
   // ─── Buyer: record purchase tx ──────────────────────────────────
   async recordPurchase(params: {
     txHash: string;
@@ -137,7 +187,10 @@ export const escrowService = {
     const passportAddr = normalizeAddress(params.passportObjectAddress);
     const buyerAddr = normalizeAddress(params.buyerAddress);
 
-    const result = await validateRecordedTransaction(params.txHash, ESCROW_PURCHASE_FN);
+    const result = await validateRecordedTransaction(params.txHash, [
+      ESCROW_PURCHASE_FN,
+      ESCROW_PURCHASE_WITH_LPT_FN,
+    ]);
     if (!result.success) {
       return { success: false as const, error: (result as { error: string }).error };
     }

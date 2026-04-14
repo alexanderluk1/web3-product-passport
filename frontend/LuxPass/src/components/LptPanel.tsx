@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/hooks/useAuth";
 import { showError, showSuccess } from "@/utils/toast";
+import { normalizeAptosAddress } from "@/utils/aptosAddress";
 
 const API_BASE_URL = "http://localhost:3001";
 const SIGNUP_CLAIM_STORAGE_PREFIX = "luxpass:lpt:signup-claimed:";
@@ -123,16 +124,6 @@ function shortenAddress(address?: string | null): string {
 function strField(data: Record<string, unknown>, key: string): string {
   const v = data[key];
   return typeof v === "string" ? v : v != null ? String(v) : "";
-}
-
-/** Match backend canonical Aptos account hex for comparisons. */
-function normalizeAptosAddress(address: string): string {
-  const normalized = address.trim().toLowerCase();
-  if (!normalized.startsWith("0x")) {
-    return normalized;
-  }
-  const hex = normalized.slice(2).replace(/^0+/, "");
-  return `0x${hex || "0"}`;
 }
 
 function dataAddr(data: Record<string, unknown>, key: string): string {
