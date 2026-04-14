@@ -5,10 +5,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Shield, Settings, Users, UserPlus, UserX, Database, RefreshCw } from "lucide-react";
+import { Shield, Settings, Users, UserPlus, UserX, Database, RefreshCw, Coins } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { showSuccess, showError } from "@/utils/toast";
+import { LptPanel } from "@/components/LptPanel";
 
 const AdminDashboard = () => {
   const { user, accessToken } = useAuth();
@@ -325,7 +326,7 @@ const AdminDashboard = () => {
           </div>
 
           <Tabs defaultValue="registry" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-2 bg-white/80 backdrop-blur-sm">
+            <TabsList className="grid w-full grid-cols-3 bg-white/80 backdrop-blur-sm">
               <TabsTrigger value="registry" className="flex items-center">
                 <Database className="mr-2 h-4 w-4" />
                 Registry Management
@@ -333,6 +334,10 @@ const AdminDashboard = () => {
               <TabsTrigger value="issuers" className="flex items-center">
                 <Users className="mr-2 h-4 w-4" />
                 Issuer Management
+              </TabsTrigger>
+              <TabsTrigger value="lpt" className="flex items-center">
+                <Coins className="mr-2 h-4 w-4" />
+                LPT Management
               </TabsTrigger>
             </TabsList>
 
@@ -499,6 +504,10 @@ const AdminDashboard = () => {
                   </CardContent>
                 </Card>
               </div>
+            </TabsContent>
+
+            <TabsContent value="lpt">
+              <LptPanel mode="admin" />
             </TabsContent>
           </Tabs>
         </div>

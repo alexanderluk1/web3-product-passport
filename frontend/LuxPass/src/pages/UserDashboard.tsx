@@ -616,7 +616,7 @@ const UserDashboard = () => {
                               <Badge className="bg-green-100 text-green-800 border-green-200">
                                 Owned
                               </Badge>
-                              <div>
+                              <div className="flex flex-wrap justify-end gap-2">
                                 {passport.transferable ? (
                                   <Button 
                                     size="sm" 
@@ -635,6 +635,9 @@ const UserDashboard = () => {
                                     Non-transferable
                                   </div>
                                 )}
+                                <PassportServicePayment
+                                  passportLabel={passport.metadata?.name || passport.serialNumber}
+                                />
                               </div>
                             </div>
                           </div>
@@ -689,10 +692,6 @@ const UserDashboard = () => {
                               </div>
                             </div>
                           )}
-
-                          <PassportServicePayment
-                            passportLabel={passport.metadata?.name || passport.serialNumber}
-                          />
 
                           <div className="grid grid-cols-1 gap-4 text-sm text-gray-600 mt-3">
                             <div>
