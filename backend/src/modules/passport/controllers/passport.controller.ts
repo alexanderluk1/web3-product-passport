@@ -1,5 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
-import { passportService, passportListingService } from "../services/passport.service";
+import { passportService } from "../services/passport.service";
+import { listingService } from "../services/listing.service";
+import { delistService } from "../services/delist.service";
 import type {
   PrepareMintPassportRequestBody,
   PrepareTransferRequestBody,
@@ -312,7 +314,7 @@ export async function prepareSetStatusHandler(req: Request, res: Response) {
       });
     }
 
-    const result = await passportListingService.prepareSetStatus({
+    const result = await listingService.prepareSetStatus({
       callerWalletAddress: req.user.walletAddress,
       callerRole: req.user.role,
       body,
@@ -354,7 +356,7 @@ export async function recordSetStatusHandler(req: Request, res: Response) {
       });
     }
 
-    const result = await passportListingService.recordSetStatus({ body });
+    const result = await listingService.recordSetStatus({ body });
 
     if (!result.success) {
       console.log(result.error)
@@ -385,7 +387,7 @@ export async function prepareUpdateMetadataHandler(req: Request, res: Response) 
 
     const body = req.body as PrepareUpdateMetadataRequestBody;
 
-    const result = await passportListingService.prepareUpdateMetadata({
+    const result = await listingService.prepareUpdateMetadata({
       callerWalletAddress: req.user.walletAddress,
       callerRole: req.user.role,
       body,
@@ -428,7 +430,7 @@ export async function recordUpdateMetadataHandler(req: Request, res: Response) {
       });
     }
 
-    const result = await passportListingService.recordUpdateMetadata({ body });
+    const result = await listingService.recordUpdateMetadata({ body });
 
     if (!result.success) {
       console.log(result.error)
@@ -468,7 +470,7 @@ export async function prepareListPassportHandler(req: Request, res: Response) {
       });
     }
 
-    const result = await passportListingService.prepareListPassport({
+    const result = await listingService.prepareListPassport({
       callerWalletAddress: req.user.walletAddress,
       body,
     });
@@ -509,7 +511,7 @@ export async function recordListPassportHandler(req: Request, res: Response) {
       });
     }
 
-    const result = await passportListingService.recordListPassport({ body });
+    const result = await listingService.recordListPassport({ body });
 
     if (!result.success) {
       console.log("record list passport failed:"+result.error);
@@ -549,7 +551,7 @@ export async function receivePassportHandler(req: Request, res: Response) {
 
     body.newStatus = STATUS_VERIFYING
 
-    const result = await passportListingService.prepareSetStatus({
+    const result = await listingService.prepareSetStatus({
       callerWalletAddress: req.user.walletAddress,
       callerRole: req.user.role,
       body,
@@ -593,7 +595,7 @@ export async function verifyPassportHandler(req: Request, res: Response) {
 
     body.newStatus = STATUS_LISTING
 
-    const result = await passportListingService.prepareSetStatus({
+    const result = await listingService.prepareSetStatus({
       callerWalletAddress: req.user.walletAddress,
       callerRole: req.user.role,
       body,
@@ -626,7 +628,7 @@ export async function requestListingNoPassport(req: Request, res: Response) {
       });
     }
 
-    const result = await passportListingService.submitListingRequest({
+    const result = await listingService.submitListingRequest({
       callerWalletAddress: req.user.walletAddress,
     });
 
@@ -673,7 +675,7 @@ export async function receiveNoPassportHandler(req: Request, res: Response) {
       });
     }
 
-    const result = await passportListingService.updateNoPassportListingStatus({
+    const result = await listingService.updateNoPassportListingStatus({
       callerRole: req.user.role,
       body: body,
     });
@@ -714,7 +716,7 @@ export async function prepareMintListPassportHandler(req: Request, res: Response
       });
     }
 
-    const result = await passportListingService.prepareMintListPassport({
+    const result = await listingService.prepareMintListPassport({
       adminWalletAddress: req.user.walletAddress,
       body: body,
       imageFile: req.file,
@@ -766,7 +768,7 @@ export async function recordMintListPassportHandler(req: Request, res: Response)
       });
     }
 
-    const result = await passportListingService.recordMintListPassport({ body });
+    const result = await listingService.recordMintListPassport({ body });
 
     if (!result.success) {
       console.log(result.error)
@@ -806,7 +808,7 @@ export async function requestDelistHandler(req: Request, res: Response) {
       });
     }
 
-    const result = await passportListingService.requestDelist({
+    const result = await delistService.requestDelist({
       callerWalletAddress: req.user.walletAddress,
       body,
     });
@@ -849,7 +851,7 @@ export async function approveDelistHandler(req: Request, res: Response) {
       });
     }
 
-    const result = await passportListingService.markDelistProcessed({
+    const result = await delistService.markDelistProcessed({
       callerRole: req.user.role,
       passportObjectAddress: body.passportObjectAddress,
     });
@@ -891,7 +893,7 @@ export async function prepareConfirmReceiptHandler(req: Request, res: Response) 
       });
     }
 
-    const result = await passportListingService.prepareConfirmReceipt({
+    const result = await delistService.prepareConfirmReceipt({
       callerWalletAddress: req.user.walletAddress,
       body,
     });
@@ -933,7 +935,7 @@ export async function recordConfirmReceiptHandler(req: Request, res: Response) {
       });
     }
 
-    const result = await passportListingService.recordConfirmReceipt({ body });
+    const result = await delistService.recordConfirmReceipt({ body });
 
     if (!result.success) {
       console.log(result.error)
@@ -964,7 +966,7 @@ export async function getListingByPassportAddressHandler(req: Request, res: Resp
         });
       }
   
-      const result = await passportListingService.getListingByPassportAddress({
+      const result = await listingService.getListingByPassportAddress({
         passportObjectAddress: passportObjectAddress,
       });
   
@@ -998,7 +1000,7 @@ export async function getListingByStatusHandler(req: Request, res: Response) {
         });
       }
   
-      const result = await passportListingService.getListingsByStatus({
+      const result = await listingService.getListingsByStatus({
         status: status,
       });
   
@@ -1031,7 +1033,7 @@ export async function getDelistingByPassportAddressHandler(req: Request, res: Re
         });
       }
   
-      const result = await passportListingService.getDeListingRequestByPassportAddress({
+      const result = await listingService.getDeListingRequestByPassportAddress({
         passportObjectAddress: passportObjectAddress,
       });
   
@@ -1064,7 +1066,7 @@ export async function getDelistingsByStatusHandler(req: Request, res: Response) 
         });
       }
   
-      const result = await passportListingService.getDeListingsByStatus({
+      const result = await listingService.getDeListingsByStatus({
         status: status,
       });
   
