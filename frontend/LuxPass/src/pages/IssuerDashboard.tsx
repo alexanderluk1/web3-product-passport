@@ -16,6 +16,7 @@ import { Link } from "react-router-dom";
 import { showSuccess, showError } from "@/utils/toast";
 import { useAuth } from "@/hooks/useAuth";
 import { useWallet } from "@aptos-labs/wallet-adapter-react";
+import { LptPanel } from "@/components/LptPanel";
 
 const ALLOWED_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const API_BASE_URL = "http://localhost:3001";
@@ -65,6 +66,8 @@ const IssuerDashboard = () => {
   const { user, accessToken } = useAuth();
   const { account, signAndSubmitTransaction } = useWallet();
   const [isCreating, setIsCreating] = useState(false);
+  const [activeTab, setActiveTab] = useState("create");
+  const [lptWalletRefreshKey, setLptWalletRefreshKey] = useState(0);
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [products, setProducts] = useState<EnrichedProduct[]>([]);
@@ -101,6 +104,18 @@ const IssuerDashboard = () => {
   useEffect(() => {
     fetchLptBalance();
   }, [accessToken, user?.walletAddress, account]);
+
+  const handleTabChange = (value: string) => {
+    setActiveTab(value);
+
+    if (value === "create") {
+      fetchLptBalance();
+    }
+
+    if (value === "lpt") {
+      setLptWalletRefreshKey((current) => current + 1);
+    }
+  };
 
   // Helper function to convert IPFS URI to Pinata gateway URL
   const convertIPFSToHTTP = (uri: string): string => {
@@ -999,8 +1014,8 @@ const IssuerDashboard = () => {
             </CardContent>
           </Card>
 
-          <Tabs defaultValue="create" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-2 bg-white/80 backdrop-blur-sm">
+          <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
+            <TabsList className="grid w-full grid-cols-3 bg-white/80 backdrop-blur-sm">
               <TabsTrigger value="create" className="flex items-center">
                 <Plus className="mr-2 h-4 w-4" />
                 Create Product
@@ -1008,6 +1023,10 @@ const IssuerDashboard = () => {
               <TabsTrigger value="manage" className="flex items-center">
                 <Package className="mr-2 h-4 w-4" />
                 Manage Products ({products.length})
+              </TabsTrigger>
+              <TabsTrigger value="lpt" className="flex items-center">
+                <Wallet className="mr-2 h-4 w-4" />
+                LPT Wallet
               </TabsTrigger>
             </TabsList>
 
@@ -1423,6 +1442,11 @@ const IssuerDashboard = () => {
                   )}
                 </CardContent>
               </Card>
+            </TabsContent>
+
+            {/* LPT Wallet Tab */}
+            <TabsContent value="lpt">
+              <LptPanel mode="issuer" refreshKey={lptWalletRefreshKey} />
             </TabsContent>
           </Tabs>
 

@@ -101,7 +101,8 @@ type LptEventFeedResponse = {
 };
 
 type LptPanelProps = {
-  mode?: "user" | "admin";
+  mode?: "user" | "admin" | "issuer";
+  refreshKey?: number;
 };
 
 function isValidWalletAddress(address: string): boolean {
@@ -370,13 +371,12 @@ function getWalletAddress(account: unknown): string {
   return "";
 }
 
-export function LptPanel({ mode = "user" }: LptPanelProps) {
+export function LptPanel({ mode = "user", refreshKey = 0 }: LptPanelProps) {
   const { accessToken, user } = useAuth();
   const { account, connected, signAndSubmitTransaction } = useWallet();
   const [status, setStatus] = useState<TokenStatus | null>(null);
   const [balance, setBalance] = useState<string>("0");
   const [totalSupply, setTotalSupply] = useState<string>("0");
-  const [subsidyPoolBalance, setSubsidyPoolBalance] = useState<string>("0");
   const [tokenAdminAddress, setTokenAdminAddress] = useState<string | null>(null);
   const [rewardConfig, setRewardConfig] = useState<RewardConfig | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -393,8 +393,6 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
   const [mintAmount, setMintAmount] = useState("10");
   const [fiatBuyerAddress, setFiatBuyerAddress] = useState("");
   const [fiatAmount, setFiatAmount] = useState("25");
-  const [allocateRecipientAddress, setAllocateRecipientAddress] = useState("");
-  const [allocateAmount, setAllocateAmount] = useState("5");
   const [lastTxHash, setLastTxHash] = useState<string | null>(null);
   const [signupRewardClaimed, setSignupRewardClaimed] = useState(false);
   const [isRewardDialogOpen, setIsRewardDialogOpen] = useState(false);
@@ -411,6 +409,7 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
 
   const isAdmin = user?.role === "ADMIN";
   const showUserActions = mode === "user";
+  const showPurchaseActions = mode === "user" || mode === "issuer";
   const showAdminActions = mode === "admin" && isAdmin;
 
   const authHeaders = useMemo(() => {
@@ -456,13 +455,38 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
       const tokenStatus = await fetchJson<TokenStatus>(`${API_BASE_URL}/api/tokens/status`);
       setStatus(tokenStatus);
 
+      if (mode === "issuer") {
+        if (accessToken && walletAddress) {
+          const balanceData = await fetchJson<{
+            success: boolean;
+            balance: string;
+            ownerAddress: string;
+          }>(
+            `${API_BASE_URL}/api/tokens/balance/${encodeURIComponent(walletAddress)}`,
+            { headers: authHeaders }
+          );
+          setBalance(String(balanceData.balance ?? "0"));
+        } else {
+          setBalance("0");
+        }
+
+        setRewardConfig(null);
+        setTotalSupply("0");
+        setTokenAdminAddress(null);
+        setSignupRewardClaimed(false);
+
+        if (showToast) {
+          showSuccess("LPT data refreshed.");
+        }
+        return;
+      }
+
       if (accessToken && walletAddress) {
         const [
           balanceData,
           rewardData,
           signupClaimedData,
           supplyData,
-          poolData,
           adminData,
         ] = await Promise.all([
           fetchJson<{ success: boolean; balance: string; ownerAddress: string }>(
@@ -481,10 +505,6 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
             `${API_BASE_URL}/api/tokens/supply`,
             { headers: authHeaders }
           ),
-          fetchJson<{ success: boolean; subsidyPoolBalance: string }>(
-            `${API_BASE_URL}/api/tokens/pool`,
-            { headers: authHeaders }
-          ),
           fetchJson<{ success: boolean; adminAddress: string }>(
             `${API_BASE_URL}/api/tokens/admin`,
             { headers: authHeaders }
@@ -494,7 +514,6 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
         setBalance(String(balanceData.balance ?? "0"));
         setRewardConfig(rewardData);
         setTotalSupply(String(supplyData.totalSupply ?? "0"));
-        setSubsidyPoolBalance(String(poolData.subsidyPoolBalance ?? "0"));
         setTokenAdminAddress(adminData.adminAddress ?? null);
         const claimedLocally =
           Boolean(signupClaimStorageKey) &&
@@ -509,7 +528,6 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
         setBalance("0");
         setRewardConfig(null);
         setTotalSupply("0");
-        setSubsidyPoolBalance("0");
         setTokenAdminAddress(null);
         setSignupRewardClaimed(false);
       }
@@ -554,7 +572,7 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
 
   useEffect(() => {
     refreshTokenData();
-  }, [accessToken, walletAddress]);
+  }, [accessToken, walletAddress, refreshKey]);
 
   useEffect(() => {
     if (!signupClaimStorageKey) {
@@ -566,7 +584,7 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
   }, [signupClaimStorageKey]);
 
   useEffect(() => {
-    if (!showUserActions || !accessToken || !isPositiveInteger(aptPurchaseAmount)) {
+    if (!showPurchaseActions || !accessToken || !isPositiveInteger(aptPurchaseAmount)) {
       setAptPurchaseQuote(null);
       return;
     }
@@ -604,10 +622,10 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
       shouldIgnore = true;
       window.clearTimeout(timeoutId);
     };
-  }, [accessToken, aptPurchaseAmount, authHeaders, showUserActions]);
+  }, [accessToken, aptPurchaseAmount, authHeaders, showPurchaseActions]);
 
   useEffect(() => {
-    if (!showUserActions) {
+    if (!showPurchaseActions) {
       setAptPurchaseRateOctas(null);
       return;
     }
@@ -636,7 +654,7 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
     return () => {
       shouldIgnore = true;
     };
-  }, [showUserActions]);
+  }, [showPurchaseActions]);
 
   const prepareTokenAction = async (
     endpoint: string,
@@ -923,22 +941,6 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
     );
   };
 
-  const allocateSubsidy = () => {
-    if (!validateAddress(allocateRecipientAddress, "recipient") || !validateAmount(allocateAmount)) {
-      return;
-    }
-
-    runTokenAction(
-      "allocate",
-      () =>
-        prepareTokenAction("/api/tokens/allocate/prepare", {
-          recipientAddress: allocateRecipientAddress,
-          amount: allocateAmount,
-        }),
-      (txHash) => `Subsidy allocated${txHash ? `: ${txHash.slice(0, 10)}...` : "."}`
-    );
-  };
-
   const actionButtonLabel = (actionName: string, idleLabel: string) => {
     return activeAction === actionName ? (
       <>
@@ -963,7 +965,9 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
               LuxPass Token Flow
             </CardTitle>
             <CardDescription>
-              Claim, transfer, spend, and administer LPT across the LuxPass demo.
+              {mode === "issuer"
+                ? "View your LPT balance and buy LPT for passport fees."
+                : "Claim, transfer, spend, and administer LPT across the LuxPass demo."}
             </CardDescription>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
@@ -991,68 +995,69 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className={`grid gap-4 ${mode === "issuer" ? "md:grid-cols-1" : "md:grid-cols-2"}`}>
           <div className="rounded-lg border bg-white/70 p-4">
             <p className="text-sm text-gray-500">Your Balance</p>
             <p className="mt-2 text-3xl font-bold text-gray-900">{balance} LPT</p>
             <p className="mt-2 text-xs text-gray-500 font-mono">{shortenAddress(walletAddress)}</p>
           </div>
-          <div className="rounded-lg border bg-white/70 p-4">
-            <p className="text-sm text-gray-500">Total Supply</p>
-            <p className="mt-2 text-3xl font-bold text-gray-900">{totalSupply}</p>
-            <p className="mt-2 text-xs text-gray-500">Platform-wide LPT minted</p>
-          </div>
-          <div className="rounded-lg border bg-white/70 p-4">
-            <p className="text-sm text-gray-500">Subsidy Pool</p>
-            <p className="mt-2 text-3xl font-bold text-gray-900">{subsidyPoolBalance}</p>
-            <p className="mt-2 text-xs text-gray-500">Available for admin allocation</p>
-          </div>
+          {mode !== "issuer" && (
+            <>
+              <div className="rounded-lg border bg-white/70 p-4">
+                <p className="text-sm text-gray-500">Total Supply</p>
+                <p className="mt-2 text-3xl font-bold text-gray-900">{totalSupply}</p>
+                <p className="mt-2 text-xs text-gray-500">Platform-wide LPT minted</p>
+              </div>
+            </>
+          )}
         </div>
 
-        {showUserActions && (
+        {showPurchaseActions && (
           <>
             <Separator />
 
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="rounded-lg border bg-white/70 p-4">
-                <div className="mb-4 flex items-center">
-                  <Send className="mr-2 h-5 w-5 text-blue-600" />
-                  <div>
-                    <h3 className="font-semibold">P2P Transfer</h3>
-                    <p className="text-sm text-gray-600">Send LPT to another wallet.</p>
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  <div className="grid gap-3 md:grid-cols-[1fr_120px]">
+            <div className={`grid gap-4 ${showUserActions ? "lg:grid-cols-2" : "lg:grid-cols-1"}`}>
+              {showUserActions && (
+                <div className="rounded-lg border bg-white/70 p-4">
+                  <div className="mb-4 flex items-center">
+                    <Send className="mr-2 h-5 w-5 text-blue-600" />
                     <div>
-                      <Label htmlFor="lptRecipient">Recipient Wallet</Label>
-                      <Input
-                        id="lptRecipient"
-                        placeholder="0x..."
-                        value={recipientAddress}
-                        onChange={(event) => setRecipientAddress(event.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <Label htmlFor="lptTransferAmount">Amount</Label>
-                      <Input
-                        id="lptTransferAmount"
-                        inputMode="numeric"
-                        value={transferAmount}
-                        onChange={(event) => setTransferAmount(event.target.value)}
-                      />
+                      <h3 className="font-semibold">P2P Transfer</h3>
+                      <p className="text-sm text-gray-600">Send LPT to another wallet.</p>
                     </div>
                   </div>
-                  <Button
-                    className="w-full bg-blue-600 hover:bg-blue-700"
-                    onClick={sendLpt}
-                    disabled={isBusy || !accessToken || !connected}
-                  >
-                    <ArrowRightLeft className="mr-2 h-4 w-4" />
-                    {actionButtonLabel("transfer", "Send LPT")}
-                  </Button>
+                  <div className="space-y-3">
+                    <div className="grid gap-3 md:grid-cols-[1fr_120px]">
+                      <div>
+                        <Label htmlFor="lptRecipient">Recipient Wallet</Label>
+                        <Input
+                          id="lptRecipient"
+                          placeholder="0x..."
+                          value={recipientAddress}
+                          onChange={(event) => setRecipientAddress(event.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="lptTransferAmount">Amount</Label>
+                        <Input
+                          id="lptTransferAmount"
+                          inputMode="numeric"
+                          value={transferAmount}
+                          onChange={(event) => setTransferAmount(event.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <Button
+                      className="w-full bg-blue-600 hover:bg-blue-700"
+                      onClick={sendLpt}
+                      disabled={isBusy || !accessToken || !connected}
+                    >
+                      <ArrowRightLeft className="mr-2 h-4 w-4" />
+                      {actionButtonLabel("transfer", "Send LPT")}
+                    </Button>
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div className="rounded-lg border bg-white/70 p-4">
                 <div className="mb-4 flex items-center">
@@ -1168,7 +1173,7 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
               <div className="mb-4">
                 <h3 className="text-lg font-semibold text-gray-900">Admin Token Controls</h3>
                 <p className="text-sm text-gray-600">
-                  Use the admin wallet for LPT initialisation, manual minting, fiat credits, and subsidy allocation.
+                  Use the admin wallet for LPT initialisation, manual minting, and fiat credits.
                 </p>
               </div>
 
@@ -1271,37 +1276,6 @@ export function LptPanel({ mode = "user" }: LptPanelProps) {
                   </div>
                 </div>
 
-                <div className="rounded-lg border bg-white/70 p-4">
-                  <h4 className="font-semibold">Allocate Subsidy</h4>
-                  <p className="text-sm text-gray-600">Move LPT from the subsidy pool to a recipient wallet.</p>
-                  <div className="mt-4 space-y-3">
-                    <div>
-                      <Label htmlFor="lptAllocateRecipient">Recipient Wallet</Label>
-                      <Input
-                        id="lptAllocateRecipient"
-                        placeholder="0x..."
-                        value={allocateRecipientAddress}
-                        onChange={(event) => setAllocateRecipientAddress(event.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <Label htmlFor="lptAllocateAmount">Amount</Label>
-                      <Input
-                        id="lptAllocateAmount"
-                        inputMode="numeric"
-                        value={allocateAmount}
-                        onChange={(event) => setAllocateAmount(event.target.value)}
-                      />
-                    </div>
-                    <Button
-                      className="w-full"
-                      onClick={allocateSubsidy}
-                      disabled={isBusy || !accessToken || !connected}
-                    >
-                      {actionButtonLabel("allocate", "Allocate Subsidy")}
-                    </Button>
-                  </div>
-                </div>
               </div>
             </div>
           </>
