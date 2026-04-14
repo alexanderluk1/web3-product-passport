@@ -58,6 +58,9 @@ interface ListingRequest {
   owner_address: string;
   status: string;
   has_passport: boolean;
+  price_octas: string | null; // Added
+  escrow_tx_hash: string | null; // Added
+  in_escrow: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -729,6 +732,7 @@ const UserDashboard = () => {
                           const isListed    = listing.status === "listed";
                           const isSold      = listing.status === "sold";
                           const isDelistFormOpen = delistingPassportAddr === listing.passport_object_address;
+                          const inEscrow = listing.in_escrow;
 
                           return (
                             <div key={listing.id} className="border rounded-lg p-4 bg-white/50 space-y-3">
@@ -768,8 +772,23 @@ const UserDashboard = () => {
                               <div className="text-xs text-gray-500 flex items-start gap-1">
                                 {listing.status === "pending" && <><Clock className="h-3 w-3 mt-0.5 flex-shrink-0" /> Ship your product to LuxPass. Awaiting receipt.</>}
                                 {listing.status === "verifying" && <><Clock className="h-3 w-3 mt-0.5 flex-shrink-0" /> LuxPass has received your product and is verifying it.</>}
-                                {listing.status === "listed" && <><CheckCircle2 className="h-3 w-3 mt-0.5 flex-shrink-0 text-green-500" /> Your product is live on the marketplace.</>}
-                                {listing.status === "sold" && <><CheckCircle2 className="h-3 w-3 mt-0.5 flex-shrink-0 text-green-500" /> Product has been sold to you.</>}
+                                {listing.status === "listed" && (
+                                  <>
+                                    <CheckCircle2 className={`h-3 w-3 mt-0.5 flex-shrink-0 ${listing.in_escrow ? "text-green-500" : "text-yellow-500"}`} /> 
+                                    {listing.in_escrow 
+                                      ? "Product is on marketplace" 
+                                      : "Your product is ready to list on the marketplace"}
+                                  </>
+                                )}
+
+                                {listing.status === "sold" && (
+                                  <>
+                                    <CheckCircle2 className="h-3 w-3 mt-0.5 flex-shrink-0 text-green-500" /> 
+                                    {listing.in_escrow 
+                                      ? "Product is on marketplace" 
+                                      : "Product has been sold to you can request it to be shipped to you or put it back up on marketplace"}
+                                  </>
+                                )}
                                 {listing.status === "request_return" && <><Clock className="h-3 w-3 mt-0.5 flex-shrink-0" /> Delist requested. Awaiting admin approval.</>}
                                 {listing.status === "returning" && <><Truck className="h-3 w-3 mt-0.5 flex-shrink-0" /> Your product is on its way back. Confirm receipt when it arrives.</>}
                                 {listing.status === "returned" && <><CheckCircle2 className="h-3 w-3 mt-0.5 flex-shrink-0 text-green-500" /> Listing closed. Product returned successfully.</>}
@@ -778,7 +797,7 @@ const UserDashboard = () => {
                               {/* Action buttons */}
                               <div className="flex gap-2 flex-wrap">
                                 {/* Set price for escrow marketplace (only when listed and not already in escrow) */}
-                                {(isListed || isSold) && !isDelistFormOpen && escrowPriceAddr !== listing.passport_object_address && (
+                                {(isListed || isSold) && !inEscrow && !isDelistFormOpen && escrowPriceAddr !== listing.passport_object_address && (
                                   <Button
                                     size="sm"
                                     className="bg-purple-600 hover:bg-purple-700"
@@ -789,7 +808,7 @@ const UserDashboard = () => {
                                 )}
 
                                 {/* Delist request (only when listed) */}
-                                {(isListed || isSold) && !isDelistFormOpen && escrowPriceAddr !== listing.passport_object_address && (
+                                {(isListed || isSold) && !inEscrow && !isDelistFormOpen && escrowPriceAddr !== listing.passport_object_address && (
                                   <Button
                                     size="sm"
                                     variant="outline"

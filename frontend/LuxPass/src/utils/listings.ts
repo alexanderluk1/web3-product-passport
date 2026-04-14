@@ -1,9 +1,12 @@
-export interface ListingRequest {
+interface ListingRequest {
   id: string;
   passport_object_address: string;
   owner_address: string;
   status: string;
   has_passport: boolean;
+  price_octas: string | null; // Added
+  escrow_tx_hash: string | null; // Added
+  in_escrow: boolean;
   created_at: string;
   updated_at: string;
 }
