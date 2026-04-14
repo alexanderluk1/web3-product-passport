@@ -449,7 +449,8 @@ export async function updateListingEscrowStatus(
 
 export async function getListedInEscrow(): Promise<ListingRequest[]> {
   const rows = await db("listing_requests")
-    .where({ status: "listed", in_escrow: true })
+    .whereIn("status", ["listed", "sold"])
+    .where({ in_escrow: true })
     .whereNotNull("price_octas")
     .orderBy("updated_at", "desc");
   return rows.map(mapListingRow).filter(Boolean) as ListingRequest[];

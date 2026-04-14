@@ -20,7 +20,7 @@ interface EnrichedListing extends MarketplaceListing {
 }
 
 function convertIPFSToHTTP(uri: string): string {
-  if (uri.startsWith("ipfs://")) return `https://${PINATA_GATEWAY_URL}/ipfs/${uri.replace("ipfs://", "")}`;
+  if (uri.startsWith("ipfs://")) return `${PINATA_GATEWAY_URL}/ipfs/${uri.replace("ipfs://", "")}`;
   return uri;
 }
 

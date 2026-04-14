@@ -64,9 +64,9 @@ export const escrowService = {
       return { success: false as const, error: "You are not the owner of this passport." };
     }
 
-    // Check DB listing exists and is status=listed
+    // Check DB listing exists and is status=listed or sold
     const listing = await getListingRequest(passportAddr);
-    if (!listing || listing.status !== "listed") {
+    if (!listing || !(listing.status === "listed" || listing.status === "sold")) {
       return { success: false as const, error: "Listing not found or not in listed status." };
     }
     if (listing.in_escrow) {
