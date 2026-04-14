@@ -16,6 +16,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useWallet } from "@aptos-labs/wallet-adapter-react";
 import { showSuccess, showError } from "@/utils/toast";
+import { fetchListingsByStatusMap } from "@/utils/listings";
 import { Textarea } from "@/components/ui/textarea";
 
 const BASE_URL = "http://localhost:3001";
@@ -195,16 +196,7 @@ const AdminDashboard = () => {
   const fetchAllListings = async () => {
     setListingsLoading(true);
     try {
-      const statuses = ["pending", "verifying", "listed", "request_return", "returning", "returned"];
-      const results  = await Promise.all(
-        statuses.map(s =>
-          fetch(`${BASE_URL}/api/passports/listings/status/${s}`, {
-            headers: { Authorization: `Bearer ${accessToken}` },
-          }).then(r => r.ok ? r.json() : { payload: [] })
-        )
-      );
-      const byStatus: Record<string, ListingRequest[]> = {};
-      statuses.forEach((s, i) => { byStatus[s] = results[i].payload ?? []; });
+      const byStatus = await fetchListingsByStatusMap({ baseUrl: BASE_URL, accessToken });
       setListings(byStatus);
 
       // Fetch delist requests pending

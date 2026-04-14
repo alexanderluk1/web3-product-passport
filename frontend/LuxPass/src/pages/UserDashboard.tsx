@@ -17,6 +17,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useWallet } from "@aptos-labs/wallet-adapter-react";
 import { showSuccess, showError } from "@/utils/toast";
+import { fetchListingsByStatusMap } from "@/utils/listings";
 
 const PINATA_GATEWAY_URL = "https://amaranth-passive-chicken-549.mypinata.cloud";
 const BASE_URL = "http://localhost:3001";
@@ -204,16 +205,9 @@ const UserDashboard = () => {
     setListingsLoading(true);
     try {
       // Fetch all non-returned listing statuses for the current user
-      const statuses = ["pending", "verifying", "listed", "request_return", "returning", "returned"];
-      const results = await Promise.all(
-        statuses.map(s =>
-          fetch(`${BASE_URL}/api/passports/listings/status/${s}`, {
-            headers: { Authorization: `Bearer ${accessToken}` },
-          }).then(r => r.ok ? r.json() : { payload: [] })
-        )
-      );
+      const byStatus = await fetchListingsByStatusMap({ baseUrl: BASE_URL, accessToken });
       // Filter to only listings owned by this user
-      const all: ListingRequest[] = results.flatMap(r => r.payload ?? []);
+      const all: ListingRequest[] = Object.values(byStatus).flat();
       const mine = all.filter(l => l.owner_address === user?.walletAddress);
       setMyListings(mine);
     } catch { showError("Failed to fetch listings"); }
