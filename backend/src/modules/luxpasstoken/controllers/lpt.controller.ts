@@ -32,6 +32,15 @@ export async function getStatusHandler(_req: Request, res: Response) {
   }
 }
 
+export function getAptPurchaseRateHandler(_req: Request, res: Response) {
+  try {
+    const rate = lptService.getAptPurchaseRate();
+    return res.status(200).json({ success: true, ...rate });
+  } catch (error) {
+    return handleError(res, error, "Failed to read APT purchase rate.");
+  }
+}
+
 export async function prepareInitHandler(req: Request, res: Response) {
   try {
     const body = req.body as { signupRewardAmount?: unknown; referralRewardAmount?: unknown };

@@ -3,6 +3,7 @@ import { requireAuth } from "../../auth/middleware/requireAuth";
 import { requireRole } from "../../auth/middleware/requireRole";
 import {
   getStatusHandler,
+  getAptPurchaseRateHandler,
   prepareInitHandler,
   prepareMintHandler,
   prepareTransferHandler,
@@ -40,6 +41,7 @@ lptRouter.get("/", (_req: Request, res: Response) => {
       "GET /api/tokens/admin",
       "GET /api/tokens/reward-config",
       "GET /api/tokens/signup-claimed/:ownerAddress",
+      "GET /api/tokens/purchase-apt/rate",
       "POST /api/tokens/init/prepare",
       "POST /api/tokens/mint/prepare",
       "POST /api/tokens/transfer/prepare",
@@ -59,6 +61,7 @@ lptRouter.get("/", (_req: Request, res: Response) => {
 });
 
 lptRouter.get("/status", getStatusHandler);
+lptRouter.get("/purchase-apt/rate", getAptPurchaseRateHandler);
 
 lptRouter.post("/init/prepare", requireAuth, requireRole("ADMIN"), prepareInitHandler);
 lptRouter.post("/mint/prepare", requireAuth, requireRole("ADMIN"), prepareMintHandler);

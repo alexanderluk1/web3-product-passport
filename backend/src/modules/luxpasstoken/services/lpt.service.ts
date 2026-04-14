@@ -280,6 +280,16 @@ export type LptStatus = {
 
 
 export const lptService = {
+  getAptPurchaseRate(): {
+    priceOctasPerLpt: bigint;
+    treasuryAddress: string;
+  } {
+    return {
+      priceOctasPerLpt: APT_PURCHASE_PRICE_OCTAS_PER_LPT,
+      treasuryAddress: aptPurchaseTreasuryAddress(),
+    };
+  },
+
   // Health Check
   async getStatus(): Promise<LptStatus> {
     const configuredStateAddress = stateAddress();
