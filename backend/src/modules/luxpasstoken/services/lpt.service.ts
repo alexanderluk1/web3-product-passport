@@ -237,6 +237,22 @@ function getAdminAccount(): Account {
   return Account.fromPrivateKey({ privateKey });
 }
 
+function getAdminAccountAddress(): string {
+  return normaliseAddress(String(getAdminAccount().accountAddress), "ADMIN_PRIVATE_KEY address");
+}
+
+async function ensureBackendSignerIsLptAdmin(): Promise<void> {
+  const configuredStateAddress = stateAddress();
+  const onChainAdmin = await viewAdmin(aptos, configuredStateAddress);
+  const backendAdmin = getAdminAccountAddress();
+
+  if (normaliseAddress(onChainAdmin, "LPT admin address") !== backendAdmin) {
+    throw new Error(
+      `Backend signer ${backendAdmin} is not the LPT admin for state ${configuredStateAddress}. Current LPT admin is ${onChainAdmin}.`
+    );
+  }
+}
+
 async function ensureLptInfrastructureInitialised(): Promise<void> {
   const configuredStateAddress = stateAddress();
 
@@ -415,6 +431,7 @@ export const lptService = {
     priceOctasPerLpt: bigint;
   }> {
     await ensureLptInfrastructureInitialised();
+    await ensureBackendSignerIsLptAdmin();
 
     const buyer = normaliseAddress(buyerAddress, "buyerAddress");
     const amount = parsePositiveAmount(lptAmount, "lptAmount");
@@ -446,6 +463,7 @@ export const lptService = {
     creditVmStatus?: string;
   }> {
     await ensureLptInfrastructureInitialised();
+    await ensureBackendSignerIsLptAdmin();
 
     const buyer = normaliseAddress(buyerAddress, "buyerAddress");
     const amount = parsePositiveAmount(lptAmount, "lptAmount");
