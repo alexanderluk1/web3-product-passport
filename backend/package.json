@@ -10,7 +10,9 @@
     "sign": "tsx --env-file=.env scripts/sign-challenge.ts",
     "sign:setup": "node -e \"const fs=require('fs');const p='scripts/sign-challenge.ts';if(!fs.existsSync(p))fs.copyFileSync('scripts/sign-challenge.example.ts',p);else console.log('sign-challenge.ts already exists; not overwriting.');\"",
     "build": "tsc",
-    "start:dist": "node dist/server.js"
+    "start:dist": "node dist/server.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [],
   "author": "",
@@ -18,14 +20,21 @@
   "type": "module",
   "dependencies": {
     "@aptos-labs/ts-sdk": "^6.1.0",
+    "aptos": "^1.22.1",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
+    "knex": "^3.1.0",
     "multer": "^2.1.1",
-    "pinata": "^2.5.5"
+    "pg": "^8.13.0",
+    "pinata": "^2.5.5",
+    "supertest": "^7.2.2",
+    "typescript": "^5.x.x",
+    "vitest": "^4.1.2"
   },
   "devDependencies": {
     "@types/multer": "^2.1.0",
+    "@types/pg": "^8.11.0",
     "tsx": "^4.21.0"
   }
 }

@@ -1,5 +1,5 @@
-import { IssuerProduct } from "../../../modules/passport/types/passport.types";
-import { MODULE_ADDRESS, REGISTRY_ADDRESS } from "../constants";
+import { IssuerProduct, PassportHistoryEntry } from "../../../modules/passport/types/passport.types";
+import { MODULE_ADDRESS, REGISTRY_ADDRESS, STATUS_ACTIVE, STATUS_LISTING, STATUS_RETURNING, STATUS_REVOKED, STATUS_STORING, STATUS_SUSPENDED, STATUS_VERIFYING } from "../constants";
 
 const FULLNODE_URL =
   process.env.APTOS_FULLNODE_URL || "https://fullnode.devnet.aptoslabs.com/v1";
@@ -13,6 +13,8 @@ const MINT_FUNCTION_NAMES = (
   .split(",")
   .map((value) => value.trim().toLowerCase())
   .filter(Boolean);
+const MINT_FUNCTION_NAME = process.env.PASSPORT_MINT_FUNCTION || "mint";
+const MINTLIST_FUNCTION_NAME = process.env.PASSPORT_MINT_FUNCTION || "mint_listing";
 
 type MintedEvent = {
   version?: string;
@@ -23,6 +25,44 @@ type MintedEvent = {
     passport?: string;
   };
 };
+
+type MintListedEvent = {
+  version?: string;
+  transaction_version?: string;
+  data?: {
+    passport?: string;
+    issuer?: string;
+    owner?: string;
+    old_address?: string;
+  };
+}
+
+export const PassportStatus = {
+  ACTIVE: STATUS_ACTIVE,
+  SUSPENDED: STATUS_SUSPENDED,
+  REVOKED: STATUS_REVOKED,
+  STORING: STATUS_STORING,
+  VERIFYING: STATUS_VERIFYING,
+  LISTING: STATUS_LISTING,
+  RETURNING: STATUS_RETURNING,
+} as const;
+
+export type PassportStatusValue = (typeof PassportStatus)[keyof typeof PassportStatus];
+
+function eventVersion(event: { version?: string; transaction_version?: string }): string {
+  return String(event.version ?? event.transaction_version ?? "").trim();
+}
+
+// ----------------------
+// Passport history entry types
+// ----------------------
+
+export type PassportEventKind =
+  | "minted"
+  | "mint_listed"
+  | "transferred"
+  | "status_changed"
+  | "metadata_updated";
 
 type ObjectCoreResource = {
   data?: {
@@ -102,10 +142,11 @@ function isMintPayloadFunction(functionId?: string): boolean {
     return false;
   }
 
-  const normalized = functionId.toLowerCase();
-  return MINT_FUNCTION_NAMES.some(
-    (functionName) =>
-      normalized === `${MODULE_ADDRESS}::${PASSPORT_MODULE_NAME}::${functionName}`.toLowerCase()
+  return (
+    functionId.toLowerCase() ===
+    `${MODULE_ADDRESS}::${PASSPORT_MODULE_NAME}::${MINT_FUNCTION_NAME}`.toLowerCase() ||
+    functionId.toLowerCase() ===
+    `${MODULE_ADDRESS}::${PASSPORT_MODULE_NAME}::${MINTLIST_FUNCTION_NAME}`.toLowerCase()
   );
 }
 
@@ -137,113 +178,171 @@ async function fetchCurrentObjectOwner(objectAddress: string): Promise<string | 
   return normalizeAddress(String(owner));
 }
 
+async function fetchEvents<T>(eventField: string, limit: number): Promise<T[]> {
+  if (!REGISTRY_ADDRESS) {
+    throw new Error("REGISTRY_ADDRESS is not configured.");
+  }
+  const structTag = `${MODULE_ADDRESS}::${PASSPORT_MODULE_NAME}::PassportEvents`;
+  const url = `${FULLNODE_URL}/accounts/${normalizeAddress(
+    REGISTRY_ADDRESS
+  )}/events/${structTag}/${eventField}?limit=${limit}`;
+ 
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch ${eventField} events from Aptos: ${response.status}`
+    );
+  }
+  return (await response.json()) as T[];
+}
+
 export async function getOwnedPassports(
   ownerAddress: string,
   limit = 200
 ): Promise<IssuerProduct[]> {
   if (!MODULE_ADDRESS) {
-    throw new Error("MODULE_ADDRESS is not configured for owned-passports reader.");
-  }
-
-  if (!REGISTRY_ADDRESS) {
-    throw new Error("REGISTRY_ADDRESS is not configured for owned-passports reader.");
-  }
-
-  const normalizedOwner = normalizeAddress(ownerAddress);
-  const eventsStructTag = `${MODULE_ADDRESS}::${PASSPORT_MODULE_NAME}::PassportEvents`;
-
-  const eventsResponse = await fetch(
-    `${FULLNODE_URL}/accounts/${normalizeAddress(
-      REGISTRY_ADDRESS
-    )}/events/${eventsStructTag}/minted?limit=${limit}`
-  );
-
-  if (!eventsResponse.ok) {
     throw new Error(
-      `Failed to fetch passport minted events from Aptos: ${eventsResponse.status}`
+      "MODULE_ADDRESS is not configured for owned-passports reader."
     );
   }
-
-  const allEvents = (await eventsResponse.json()) as MintedEvent[];
-
+ 
+  if (!REGISTRY_ADDRESS) {
+    throw new Error(
+      "REGISTRY_ADDRESS is not configured for owned-passports reader."
+    );
+  }
+ 
+  const normalizedOwner = normalizeAddress(ownerAddress);
+ 
+  // --- 1. Fetch minted events ---
+  const mintedEvents = await fetchEvents<MintedEvent>("minted", limit);
+ 
+  // --- 2. Fetch mint_list events ---
+  const mintListedEvents = await fetchEvents<MintListedEvent>("mint_list", limit);
+ 
+  // --- 3. Combine all candidate passport addresses from both mint sources ---
+  type CandidateSource =
+    | { source: "minted"; event: MintedEvent }
+    | { source: "mint_listed"; event: MintListedEvent };
+ 
+  const candidates: CandidateSource[] = [
+    ...mintedEvents.map(
+      (e): CandidateSource => ({ source: "minted", event: e })
+    ),
+    ...mintListedEvents.map(
+      (e): CandidateSource => ({ source: "mint_listed", event: e })
+    ),
+  ];
+ 
+  // --- 4. Filter to passports currently owned by the requested address ---
   const ownershipChecks = await Promise.all(
-    allEvents.map(async (event) => {
-      const passportObjectAddr = String(event.data?.passport ?? "").trim();
-      if (!passportObjectAddr) {
-        return null;
-      }
-
+    candidates.map(async (candidate) => {
+      const passportObjectAddr = String(
+        candidate.event.data?.passport ?? ""
+      ).trim();
+      if (!passportObjectAddr) return null;
+ 
       const currentOwner = await fetchCurrentObjectOwner(passportObjectAddr);
-      if (!currentOwner || currentOwner !== normalizedOwner) {
-        return null;
-      }
-
-      return {
-        event,
-        currentOwner,
-      };
+      if (!currentOwner || currentOwner !== normalizedOwner) return null;
+ 
+      return { candidate, passportObjectAddr: normalizeAddress(passportObjectAddr), currentOwner };
     })
   );
-
-  const matchedOwnership = ownershipChecks.filter(
-    (entry): entry is { event: MintedEvent; currentOwner: string } => entry !== null
+ 
+  const matched = ownershipChecks.filter(
+    (
+      entry
+    ): entry is {
+      candidate: CandidateSource;
+      passportObjectAddr: string;
+      currentOwner: string;
+    } => entry !== null
   );
-
-  const txVersions = matchedOwnership
-    .map(({ event }) => String(event.version ?? event.transaction_version ?? "").trim())
-    .filter((version) => version.length > 0);
-
-  const txs = await Promise.all(txVersions.map((version) => fetchTransactionByVersion(version)));
-
+ 
+  // --- 5. Fetch mint transactions ---
+  const txs = await Promise.all(
+    matched.map(({ candidate }) => {
+      const version = eventVersion(candidate.event);
+      return version ? fetchTransactionByVersion(version) : Promise.resolve(null);
+    })
+  );
+ 
+  // --- 6. Assemble IssuerProduct records ---
   const products: IssuerProduct[] = [];
-
-  for (let i = 0; i < txs.length; i += 1) {
+  const ownedPassportAddrs = new Set<string>();
+ 
+  for (let i = 0; i < txs.length; i++) {
     const tx = txs[i];
-    const matched = matchedOwnership[i];
+    const entry = matched[i];
+    if (!entry || !tx || !tx.success || tx.type !== "user_transaction") continue;
+    if (!isMintPayloadFunction(tx.payload?.function)) continue;
+ 
+    const args =
+      tx.payload?.arguments ?? tx.payload?.function_arguments ?? [];
+ 
+    const { candidate, passportObjectAddr, currentOwner } = entry;
+ 
+    if (candidate.source === "minted") {
+      // mint(issuer, registry_addr, owner, serial_plain, metadata_uri, metadata_bytes, transferable)
+      // args: [registryAddr, ownerAddr, serialPlain, metadataUri, metadataBytes, transferable]
+      if (args.length < 6) continue;
+ 
+      const [
+        registryAddressArg,
+        _ownerAddressArg,
+        serialPlainArg,
+        metadataUriArg,
+        _metadataBytesArg,
+        transferableArg,
+      ] = args;
 
-    if (!matched) {
-      continue;
+      products.push({
+        passportObjectAddr,
+        transactionVersion: tx.version,
+        transactionHash: tx.hash,
+        issuerAddress: normalizeAddress(String(tx.sender ?? "")),
+        registryAddress: normalizeAddress(String(registryAddressArg)),
+        ownerAddress: currentOwner,
+        serialNumber: bytesLikeToString(serialPlainArg),
+        metadataUri: String(metadataUriArg),
+        transferable: parseBoolean(transferableArg),
+        mintedAt: toEpochMs(tx.timestamp),
+      });
+    } else {
+      // mint_listing(admin, registry_addr, owner, serial_plain, metadata_uri, metadata_bytes, placeholder_address)
+      // args: [registryAddr, ownerAddr, serialPlain, metadataUri, metadataBytes, placeholderAddress]
+      if (args.length < 6) continue;
+ 
+      const [
+        registryAddressArg,
+        _ownerAddressArg,
+        serialPlainArg,
+        metadataUriArg,
+        _metadataBytesArg,
+        placeholderAddressArg,
+      ] = args;
+
+      products.push({
+        passportObjectAddr,
+        transactionVersion: tx.version,
+        transactionHash: tx.hash,
+        issuerAddress: normalizeAddress(String(tx.sender ?? "")),
+        registryAddress: normalizeAddress(String(registryAddressArg)),
+        ownerAddress: currentOwner,
+        serialNumber: bytesLikeToString(serialPlainArg),
+        metadataUri: String(metadataUriArg),
+        transferable: true,
+        mintedAt: toEpochMs(tx.timestamp),
+      });
     }
 
-    if (!tx || !tx.success || tx.type !== "user_transaction") {
-      continue;
-    }
-
-    if (!isMintPayloadFunction(tx.payload?.function)) {
-      continue;
-    }
-
-    const args = tx.payload?.arguments ?? tx.payload?.function_arguments ?? [];
-
-    if (args.length < 6) {
-      continue;
-    }
-
-    const [
-      registryAddressArg,
-      _ownerAddressArg,
-      serialPlainArg,
-      metadataUriArg,
-      _metadataBytesArg,
-      transferableArg,
-    ] = args;
-
-    products.push({
-      passportObjectAddr: normalizeAddress(String(matched.event.data?.passport ?? "")),
-      transactionVersion: tx.version,
-      transactionHash: tx.hash,
-      issuerAddress: normalizeAddress(String(tx.sender ?? "")),
-      registryAddress: normalizeAddress(String(registryAddressArg)),
-      // ownerAddress reflects current on-chain owner, not mint-time owner.
-      ownerAddress: matched.currentOwner,
-      serialNumber: bytesLikeToString(serialPlainArg),
-      metadataUri: String(metadataUriArg),
-      transferable: parseBoolean(transferableArg),
-      mintedAt: toEpochMs(tx.timestamp),
-    });
+    ownedPassportAddrs.add(passportObjectAddr);
   }
 
-  products.sort((a, b) => Number(b.transactionVersion) - Number(a.transactionVersion));
+  products.sort(
+    (a, b) =>
+      Number(b.transactionVersion) - Number(a.transactionVersion)
+  );
 
   return products;
 }

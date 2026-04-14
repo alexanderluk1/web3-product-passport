@@ -31,7 +31,15 @@ function parseWalletList(input?: string): Set<string> {
   );
 }
 
-const adminWallets = parseWalletList(process.env.ADMIN_WALLETS);
+const adminWallets = parseWalletList(
+  [
+    process.env.ADMIN_WALLETS,
+    process.env.REGISTRY_ADDRESS,
+    process.env.LPT_STATE_ADDRESS,
+  ]
+    .filter(Boolean)
+    .join(",")
+);
 
 function determineRole(walletAddress: string): UserRole {
   const normalizedWalletAddress = normalizeWalletAddress(walletAddress);

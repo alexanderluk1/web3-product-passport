@@ -30,3 +30,11 @@ export type PrepareAllocateBody = PrepareAmountBody & {
 export type PreparePayFeeBody = PrepareAmountBody & {
   treasuryAddress: string;
 };
+
+export type PrepareAptPurchaseBody = {
+  lptAmount: number | string;
+};
+
+export type CompleteAptPurchaseBody = PrepareAptPurchaseBody & {
+  paymentTransactionHash: string;
+};

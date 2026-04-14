@@ -4,6 +4,7 @@ import authRouter from "./modules/auth/routes/auth.routes";
 import adminRegistryRouter from "./modules/admin/routes/adminRegistry.routes";
 import issuerRegistryRoutes from "./modules/issuerRegistry/routes/issuerRegistry.routes"
 import { lptRouter } from "./modules/luxpasstoken/routes/lpt.routes";
+import { escrowRouter } from "./modules/passport/routes/escrow.routes";
 
 /**
  * Create and configure the Express app.
@@ -79,6 +80,36 @@ export function createApp() {
             // 4. POST /api/passports/mint (server-signed)
             // 5. POST /api/passports/:addr/status (server-signed)
             // 6. GET /api/passports/:addr/activity (events timeline)
+          
+          // marketplace routes
+          "POST /api/passports/status/prepare", // (Requires ADMIN/ISSUER)
+          "POST /api/passports/status/record", // handles the on-chain ADMIN set status requests from the other parts of listing like receive, delist/approve and verify
+          "POST /api/passports/metadata/prepare", //(Requires ADMIN/ISSUER, Multipart/Form-Data)
+          "POST /api/passports/metadata/record",
+          
+          // Listing Process
+          "POST /api/passports/list/passport-prepare", // (Sets status to STORING)
+          "POST /api/passports/list/passport-record",
+          "POST /api/passports/list/no-passport-record",// (Submit listing request without passport, sets database listing to pending)
+          
+          // Admin Verification & Receiving
+          "POST /api/passports/receive/no-passport", // (Requires ADMIN, database status to status -> verifying)
+          "POST /api/passports/receive/passport", //(Requires ADMIN, on-chain status -> verifying, database listing status -> verifying)
+          "POST /api/passports/verify/no-passport",// (Requires ADMIN, prepares transaction for mint_list)
+          "POST /api/passports/verify/no-passport-record",// (Requires ADMIN, records mint_list sets database listing status -> listed)
+          "POST /api/passports/verify/passport",// (Requires ADMIN, on-chain status -> listing, sets database listing status -> listed)
+          
+          // Delisting & Reeceiving of product
+          "POST /api/passports/delist/request", //(Submits DelistRequest with shipping info, listing set to request_return
+          "POST /api/passports/delist/approve",// (Requires ADMIN, status -> returning, after transaction handling by recordSetStatus, sets listing status to returning)
+          "POST /api/passports/receipt/prepare",// (Buyer confirms receipt of product, onchain transaction status -> active)
+          "POST /api/passports/receipt/record",// (The transaction is confirmed, listing status -> returned, de-listing status -> closed)
+          
+          // Data Retrieval from database of the listings
+          "POST /api/passports/listings/address/:passportObjectAddress",
+          "POST /api/passports/listings/status/:status",
+          "POST /api/passports/de-listings/address/:passportObjectAddress",
+          "POST /api/passports/de-listings/status/:status"
       ],
     });
   });
@@ -89,6 +120,7 @@ export function createApp() {
   app.use("/auth", authRouter);
   app.use("/admin", adminRegistryRouter);
   app.use("/admin", issuerRegistryRoutes);
+  app.use("/api/escrow", escrowRouter);
 
   // ---- 404 ----
   app.use((_req, res) => {

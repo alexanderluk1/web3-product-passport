@@ -4,17 +4,14 @@ import {
   GetProductByIdResponse,
   GetIssuerProductsResponse,
   PassportProvenanceEvent,
-  PassportMetadata,
   PrepareMintPassportRequestBody,
   PrepareMintWithBurnPassportRequestBody,
   PrepareMintWithBurnLptPassportRequestBody,
   PrepareMintPassportResponse,
-  PreparedMintPayload,
   PrepareTransferRequestBody,
   PrepareTransferWithBurnRequestBody,
   PrepareTransferWithBurnLptRequestBody,
   PrepareTransferResponse,
-  PreparedTransferPayload,
   RecordTransferRequestBody,
   RecordTransferResponse,
 } from "../types/passport.types";
@@ -25,6 +22,7 @@ import {
   validateRequiredString,
 } from "../../../utils/processHelper";
 import { uploadImageToPinata, uploadMetadataToPinata } from "../../../utils/pinataHelper";
+
 import { makeAptosClient } from "../../../config/aptos";
 import {
   getPassport,
@@ -39,6 +37,7 @@ import {
   PASSPORT_MINT_WITH_BURN_FN,
   PASSPORT_MINT_WITH_BURN_LPT_FN,
   PASSPORT_TRANSFER_FN,
+  STATUS_LISTING,
   PASSPORT_TRANSFER_WITH_BURN_FN,
   PASSPORT_TRANSFER_WITH_BURN_LPT_FN,
 } from "../../../chains/luxpass/constants";
@@ -49,6 +48,22 @@ import {
   saveIssuerProductsToStore,
   clearIssuerProductsFromStore,
 } from "../store/productStore";
+import { updateListingRequestOwner } from "../repository/listing_repository";
+import {
+  NORMALIZED_REGISTRY,
+  buildMintPayload,
+  buildTransferPayload,
+  buildPassportMetadata,
+  decodeProductIdInput,
+  ensurePassportInfrastructureInitialized,
+  fetchTxMetaByVersion,
+  getEventVersion,
+  isCacheFresh,
+  parseTransferable,
+  serializeMetadata,
+  toUtf8Hex,
+  validateRecordedTransaction,
+} from "./passport.service.helpers";
 
 const aptos = makeAptosClient();
 const FULLNODE_URL =
@@ -527,7 +542,6 @@ export const passportService = {
     }
 
     const normalizedOwnerAddress = normalizeAddress(body.ownerAddress);
-    const normalizedRegistryAddress = normalizeAddress(REGISTRY_ADDRESS);
     const serialPlainBytes = Array.from(Buffer.from(serialNumber, "utf8"));
     const transferable = parseTransferable(body.transferable);
 
@@ -550,11 +564,10 @@ export const passportService = {
 
     const metadataUpload = await uploadMetadataToPinata(metadata);
     // Keep hash bytes aligned with uploaded JSON payload formatting.
-    const metadataJson = JSON.stringify(metadata, null, 2);
-    const metadataBytes = Array.from(Buffer.from(metadataJson, "utf8"));
+    const metadataBytes = serializeMetadata(metadata);
 
     const payload = buildMintPayload({
-      registryAddress: normalizedRegistryAddress,
+      registryAddress: NORMALIZED_REGISTRY,
       ownerAddress: normalizedOwnerAddress,
       metadataIpfsUri: metadataUpload.ipfsUri,
       serialPlainBytes,
@@ -802,7 +815,6 @@ export const passportService = {
     const normalizedPassportAddr = normalizeAddress(body.passportObjectAddress);
     const normalizedNewOwner = normalizeAddress(body.newOwnerAddress);
     const normalizedCaller = normalizeAddress(callerWalletAddress);
-    const normalizedRegistry = normalizeAddress(REGISTRY_ADDRESS);
 
     let passport: Awaited<ReturnType<typeof getPassport>>;
     try {
@@ -827,7 +839,7 @@ export const passportService = {
     const payload = buildTransferPayload({
       passportObjectAddress: normalizedPassportAddr,
       newOwnerAddress: normalizedNewOwner,
-      registryAddress: normalizedRegistry,
+      registryAddress: NORMALIZED_REGISTRY,
     });
 
     return { success: true, payload };
@@ -951,12 +963,10 @@ export const passportService = {
   }): Promise<RecordTransferResponse> {
     const { body } = params;
 
-    if (!body.txHash || typeof body.txHash !== "string" || !body.txHash.startsWith("0x")) {
-      return { success: false, error: "Invalid transaction hash." };
-    }
-
-    const response = await fetch(
-      `${FULLNODE_URL}/transactions/by_hash/${body.txHash}`
+    const validation = await validateRecordedTransaction(
+      body.txHash,
+      PASSPORT_TRANSFER_FN,
+      "Transaction is not a transfer transaction."
     );
 
     if (!response.ok) {
@@ -988,8 +998,13 @@ export const passportService = {
 
     // Invalidate issuer product cache (best-effort)
     try {
+      const normalizedPassportAddr = normalizeAddress(body.passportObjectAddress);
       const passport = await getPassport(aptos, normalizeAddress(body.passportObjectAddress));
+      if (passport.status === STATUS_LISTING){
+        await updateListingRequestOwner(normalizedPassportAddr, normalizeAddress(body.newOwnerAddress))
+      }
       clearIssuerProductsFromStore(passport.issuer);
+      // Log the owner change in listings if passport status is listed
     } catch {
       // best-effort
     }
@@ -1005,9 +1020,7 @@ export const passportService = {
     );
 
     const mintedEventsResponse = await fetch(
-      `${FULLNODE_URL}/accounts/${normalizeAddress(
-        REGISTRY_ADDRESS
-      )}/events/${MODULE_ADDRESS}::passport::PassportEvents/minted?limit=1000`
+      `${FULLNODE_URL}/accounts/${NORMALIZED_REGISTRY}/events/${MODULE_ADDRESS}::passport::PassportEvents/minted?limit=1000`
     );
 
     if (!mintedEventsResponse.ok) {
@@ -1023,9 +1036,7 @@ export const passportService = {
     );
 
     const transferEventsResponse = await fetch(
-      `${FULLNODE_URL}/accounts/${normalizeAddress(
-        REGISTRY_ADDRESS
-      )}/events/${MODULE_ADDRESS}::passport::PassportEvents/transferred?limit=1000`
+      `${FULLNODE_URL}/accounts/${NORMALIZED_REGISTRY}/events/${MODULE_ADDRESS}::passport::PassportEvents/transferred?limit=1000`
     );
 
     let transferEvents: TransferEventRecord[] = [];
@@ -1143,7 +1154,7 @@ export const passportService = {
     const passportObjectAddr = await resolvePassportObjAddrByProductId(aptos, productIdPlain);
     const passport = await getPassport(aptos, passportObjectAddr);
     const issuerAddress = normalizeAddress(passport.issuer);
-    const registryAddress = normalizeAddress(REGISTRY_ADDRESS);
+    const registryAddress = NORMALIZED_REGISTRY;
 
     // Pull a larger history window when querying a specific product.
     const issuerProducts = await getIssuerMintedProducts(issuerAddress, 500);
@@ -1176,3 +1187,4 @@ export const passportService = {
     };
   },
 };
+

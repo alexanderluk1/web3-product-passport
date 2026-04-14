@@ -7,6 +7,8 @@ import { resolvePassportObjAddrByProductId } from "./chains/luxpass/readers/reso
 import { initRegistry } from "./chains/luxpass/writers/initRegistry.js";
 import { viewAdmin } from "./chains/luxpasstoken/readers/viewAdmin.js";
 import { init as lptInit } from "./chains/luxpasstoken/writers/init.js";
+import { getEscrowAddress } from "./chains/luxpass/readers/getEscrowAddress.js";
+import { initEscrow } from "./chains/luxpass/writers/initEscrow.js";
 import { createApp } from "./app.js";
 
 const PASSPORT_PROBE_ID = "__luxpass_passport_init_probe__";
@@ -210,6 +212,26 @@ async function ensureLptInfra(): Promise<void> {
   console.log("[preflight] LuxPassToken init completed", result.transactionHash);
 }
 
+async function ensureEscrowInfra(): Promise<void> {
+  const aptos = makeAptosClient();
+  try {
+    const escrowAddr = await getEscrowAddress(aptos, REGISTRY_ADDRESS);
+    console.log("[preflight] Escrow already initialized; address:", escrowAddr);
+    return;
+  } catch {
+    // Not initialized yet
+  }
+
+  console.log("[preflight] Escrow not found; initializing…");
+  const result = await initEscrow(aptos);
+  if (!result.success) {
+    // Non-fatal: escrow is optional for basic backend operation
+    console.warn("[preflight] Escrow init failed (non-fatal):", result.vmStatus);
+    return;
+  }
+  console.log("[preflight] Escrow init completed:", result.transactionHash);
+}
+
 async function main(): Promise<void> {
   requireEnv("MODULE_ADDRESS");
   requireEnv("REGISTRY_ADDRESS");
@@ -219,6 +241,9 @@ async function main(): Promise<void> {
 
   console.log("[preflight] Checking LuxPassToken…");
   await ensureLptInfra();
+
+  console.log("[preflight] Checking escrow…");
+  await ensureEscrowInfra();
 
   console.log("[preflight] Starting server…");
   const port = Number(process.env.PORT || 3001);
