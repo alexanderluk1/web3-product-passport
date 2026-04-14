@@ -6,7 +6,7 @@ const FULLNODE_URL =
 
 const PASSPORT_MODULE_NAME = process.env.PASSPORT_MODULE_NAME || "passport";
 const MINT_FUNCTION_NAME = process.env.PASSPORT_MINT_FUNCTION || "mint";
-const MINTLIST_FUNCTION_NAME = process.env.PASSPORT_MINT_FUNCTION || "mint_listing";
+const MINTLIST_FUNCTION_NAME = process.env.PASSPORT_MINTLIST_FUNCTION || "mint_listing";
 
 type MintedEvent = {
   version?: string;
@@ -180,6 +180,16 @@ async function fetchEvents<T>(eventField: string, limit: number): Promise<T[]> {
   )}/events/${structTag}/${eventField}?limit=${limit}`;
  
   const response = await fetch(url);
+  if (response.status === 404) {
+    console.warn("[chain:getOwnedPassports] event stream not found", {
+      eventField,
+      registryAddress: normalizeAddress(REGISTRY_ADDRESS),
+      structTag,
+      url,
+    });
+    return [];
+  }
+
   if (!response.ok) {
     throw new Error(
       `Failed to fetch ${eventField} events from Aptos: ${response.status}`
