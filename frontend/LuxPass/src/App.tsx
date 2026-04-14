@@ -11,6 +11,8 @@ import Verify from "./pages/Verify";
 import IssuerDashboard from "./pages/IssuerDashboard";
 import UserDashboard from "./pages/UserDashboard";
 import AdminDashboard from "./pages/AdminDashboard";
+import Marketplace from "./pages/Marketplace";
+import MarketplaceDetail from "./pages/MarketplaceDetail";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -30,6 +32,8 @@ const App = () => (
               <Route path="/user" element={<UserDashboard />} />
               <Route path="/issuer" element={<IssuerDashboard />} />
               <Route path="/admin" element={<AdminDashboard />} />
+              <Route path="/marketplace" element={<Marketplace />} />
+              <Route path="/marketplace/:passportObjectAddress" element={<MarketplaceDetail />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>

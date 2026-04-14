@@ -18,6 +18,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useWallet } from "@aptos-labs/wallet-adapter-react";
 import { showSuccess, showError } from "@/utils/toast";
 import { fetchListingsByStatusMap } from "@/utils/listings";
+import { octasToApt, aptToOctas, getAptUsdPrice, formatUsd } from "@/utils/price";
 
 const PINATA_GATEWAY_URL = "https://amaranth-passive-chicken-549.mypinata.cloud";
 const BASE_URL = "http://localhost:3001";
@@ -94,6 +95,7 @@ const LISTING_STATUS_LABELS: Record<string, { label: string; color: string }> = 
   request_return: { label: "Return Requested",  color: "bg-orange-100 text-orange-800"},
   returning:      { label: "Being Returned",    color: "bg-purple-100 text-purple-800"},
   returned:       { label: "Returned",          color: "bg-gray-100 text-gray-800"    },
+  sold:           { label: "Sold",              color: "bg-emerald-100 text-emerald-800"},
 };
 
 const formatDate = (ts: string | number) =>
@@ -139,11 +141,18 @@ const UserDashboard = () => {
   // Receipt state
   const [isConfirmingReceipt, setIsConfirmingReceipt] = useState<string | null>(null);
 
+  // Escrow state
+  const [escrowPriceAddr, setEscrowPriceAddr]     = useState<string | null>(null);
+  const [escrowPriceApt, setEscrowPriceApt]       = useState("");
+  const [isEscrowListing, setIsEscrowListing]     = useState(false);
+  const [aptUsdRate, setAptUsdRate]               = useState(0);
+
   useEffect(() => {
     if (user && accessToken) {
       fetchOwnedPassports();
       fetchMyListings();
     }
+    getAptUsdPrice().then(setAptUsdRate);
   }, [user, accessToken]);
 
   // ── IPFS helpers ────────────────────────────────────────────────────────────
@@ -394,6 +403,47 @@ const UserDashboard = () => {
       if (err.message?.includes("rejected")) showError("Confirmation cancelled");
       else showError("Failed to confirm receipt. Please try again.");
     } finally { setIsConfirmingReceipt(null); }
+  };
+
+  // ── ESCROW LISTING ─────────────────────────────────────────────────────────
+
+  const handleEscrowListing = async (passportAddr: string) => {
+    const priceNum = parseFloat(escrowPriceApt);
+    if (!priceNum || priceNum <= 0) { showError("Enter a valid price"); return; }
+    setIsEscrowListing(true);
+    try {
+      // 1. Prepare
+      const prepRes = await fetch(`${BASE_URL}/api/escrow/listing/prepare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ passportObjectAddress: passportAddr, priceOctas: aptToOctas(priceNum) }),
+      });
+      const prepData = await prepRes.json();
+      if (!prepData.success) { showError(prepData.error ?? "Failed to prepare escrow listing"); return; }
+
+      // 2. Sign
+      const txRes = await signAndSubmitTransaction({
+        data: { function: prepData.payload.function, functionArguments: prepData.payload.functionArguments },
+        options: { maxGasAmount: 10000, gasUnitPrice: 100, expirationSecondsFromNow: 60 },
+      });
+
+      // 3. Record
+      const recRes = await fetch(`${BASE_URL}/api/escrow/listing/record`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ txHash: txRes.hash, passportObjectAddress: passportAddr, priceOctas: aptToOctas(priceNum) }),
+      });
+      const recData = await recRes.json();
+      if (recData.success) {
+        showSuccess("Listed on marketplace with escrow! Buyers can now purchase.");
+        setEscrowPriceAddr(null);
+        setEscrowPriceApt("");
+        setTimeout(() => fetchMyListings(), 1500);
+      } else showError("On-chain but backend record failed");
+    } catch (err: any) {
+      if (err.message?.includes("rejected")) showError("Transaction cancelled");
+      else showError("Escrow listing failed. Please try again.");
+    } finally { setIsEscrowListing(false); }
   };
 
   // ── Display helpers ───────────────────────────────────────────────────────────
@@ -725,8 +775,19 @@ const UserDashboard = () => {
 
                               {/* Action buttons */}
                               <div className="flex gap-2 flex-wrap">
+                                {/* Set price for escrow marketplace (only when listed and not already in escrow) */}
+                                {isListed && !isDelistFormOpen && escrowPriceAddr !== listing.passport_object_address && (
+                                  <Button
+                                    size="sm"
+                                    className="bg-purple-600 hover:bg-purple-700"
+                                    onClick={() => { setEscrowPriceAddr(listing.passport_object_address); setEscrowPriceApt(""); }}
+                                  >
+                                    <Store className="mr-1 h-3 w-3" /> Set Price &amp; Sell
+                                  </Button>
+                                )}
+
                                 {/* Delist request (only when listed) */}
-                                {isListed && !isDelistFormOpen && (
+                                {isListed && !isDelistFormOpen && escrowPriceAddr !== listing.passport_object_address && (
                                   <Button
                                     size="sm"
                                     variant="outline"
@@ -752,6 +813,56 @@ const UserDashboard = () => {
                                   </Button>
                                 )}
                               </div>
+
+                              {/* Escrow pricing form */}
+                              {escrowPriceAddr === listing.passport_object_address && (
+                                <div className="mt-2 p-4 bg-purple-50 rounded-lg border border-purple-200 space-y-3">
+                                  <h4 className="font-semibold text-sm flex items-center gap-2">
+                                    <Store className="h-4 w-4 text-purple-600" /> Set Price for Marketplace
+                                  </h4>
+                                  <p className="text-xs text-gray-500">
+                                    This will transfer your passport to the escrow contract for custody until it sells or you cancel.
+                                  </p>
+                                  <div className="flex items-center gap-2">
+                                    <Input
+                                      type="number"
+                                      step="0.01"
+                                      min="0.01"
+                                      placeholder="0.00"
+                                      value={escrowPriceApt}
+                                      onChange={(e) => setEscrowPriceApt(e.target.value)}
+                                      className="w-40 text-sm"
+                                    />
+                                    <span className="font-semibold text-gray-700">APT</span>
+                                    {aptUsdRate > 0 && escrowPriceApt && (
+                                      <span className="text-xs text-gray-400">
+                                        ~{formatUsd(parseFloat(escrowPriceApt || "0") * aptUsdRate)} USD
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <Button
+                                      size="sm"
+                                      className="bg-purple-600 hover:bg-purple-700"
+                                      disabled={isEscrowListing || !escrowPriceApt}
+                                      onClick={() => handleEscrowListing(listing.passport_object_address)}
+                                    >
+                                      {isEscrowListing ? (
+                                        <><Loader2 className="mr-1 h-3 w-3 animate-spin" /> Listing...</>
+                                      ) : (
+                                        "List on Marketplace"
+                                      )}
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => { setEscrowPriceAddr(null); setEscrowPriceApt(""); }}
+                                    >
+                                      Cancel
+                                    </Button>
+                                  </div>
+                                </div>
+                              )}
 
                               {/* Delist / shipping address form */}
                               {isDelistFormOpen && (

@@ -18,6 +18,9 @@ const Index = () => {
             <Link to="/verify">
               <Button variant="ghost">Verify Product</Button>
             </Link>
+            <Link to="/marketplace">
+              <Button variant="ghost">Marketplace</Button>
+            </Link>
             <WalletButton />
             <Link to="/dashboard">
               <Button className="bg-purple-600 hover:bg-purple-700">Dashboard</Button>
