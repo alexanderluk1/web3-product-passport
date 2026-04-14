@@ -61,7 +61,7 @@ const Marketplace = () => {
 
   const fetchMetadata = async (passportAddr: string) => {
     try {
-      const res = await fetch(`http://localhost:3001/api/passports/by-product/${passportAddr}`);
+      const res = await fetch(`http://localhost:3001/api/passports/${passportAddr}`);
       if (!res.ok) return null;
       const data = await res.json();
       const metadataUri = data.metadataUri;

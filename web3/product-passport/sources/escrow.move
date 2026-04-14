@@ -146,10 +146,13 @@ module luxpass::escrow {
         assert!(status == STATUS_LISTING, E_NOT_ACTIVE);
 
         let state = borrow_global_mut<EscrowState>(admin_addr);
+        if (table::contains(&state.listings, passport_addr)) {
+        let existing_listing = table::borrow(&state.listings, passport_addr);
         assert!(
-            !table::contains(&state.listings, passport_addr),
-            E_LISTING_ALREADY_EXISTS,
-        );
+            !existing_listing.is_active,
+            E_LISTING_ALREADY_EXISTS
+            );
+        };
 
         // Transfer passport to escrow resource account (custody)
         let registry_addr = state.registry_addr;
@@ -157,12 +160,24 @@ module luxpass::escrow {
         passport::transfer(seller, passport, escrow_address, registry_addr);
 
         // Record listing
-        table::add(&mut state.listings, passport_addr, EscrowListing {
-            seller: seller_addr,
-            price_octas,
-            created_at_secs: timestamp::now_seconds(),
-            is_active: true,
-        });
+        if (table::contains(&state.listings, passport_addr)) {
+            let listing_ref = table::borrow_mut(&mut state.listings, passport_addr);
+            assert!(!listing_ref.is_active, E_LISTING_ALREADY_EXISTS);
+            
+            // Update the existing entry with new listing details
+            listing_ref.seller = seller_addr;
+            listing_ref.price_octas = price_octas;
+            listing_ref.is_active = true;
+            listing_ref.created_at_secs = timestamp::now_seconds();
+        } else{
+                table::add(&mut state.listings, passport_addr, EscrowListing {
+                    seller: seller_addr,
+                    price_octas,
+                    created_at_secs: timestamp::now_seconds(),
+                    is_active: true,
+                });
+        };
+
         state.listing_count = state.listing_count + 1;
 
         // Emit event
@@ -198,6 +213,7 @@ module luxpass::escrow {
 
         // Mark listing inactive before transfers (prevents re-entrancy patterns)
         listing.is_active = false;
+        state.listing_count = state.listing_count - 1;
         state.total_volume_octas = state.total_volume_octas + (price as u128);
 
         // 1. Transfer APT: buyer → escrow resource account
@@ -240,6 +256,7 @@ module luxpass::escrow {
 
         // Mark inactive
         listing.is_active = false;
+        state.listing_count = state.listing_count - 1;
 
         // Return passport to seller
         let escrow_signer = account::create_signer_with_capability(&state.signer_cap);

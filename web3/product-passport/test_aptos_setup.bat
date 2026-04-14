@@ -2,7 +2,8 @@
 setlocal
 
 :: --- Configuration ---
-set URL=http://localhost:8080/v1
+:: set URL=http://localhost:8080/v1
+set URL = https://fullnode.devnet.aptoslabs.com/v1
 :: -- faucet-url = http://localhost:8082/v1
 :: --- PRIV_KEY is the local profile private key
 set PRIV_KEY=0x56bcbf974187b75fe8236ffa09ba0f3ae3ae3df581a9c1f7cb40888af05e5e62

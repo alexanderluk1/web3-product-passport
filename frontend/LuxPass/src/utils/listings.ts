@@ -12,6 +12,7 @@ export const LISTING_STATUSES = [
   "pending",
   "verifying",
   "listed",
+  "sold",
   "request_return",
   "returning",
   "returned",

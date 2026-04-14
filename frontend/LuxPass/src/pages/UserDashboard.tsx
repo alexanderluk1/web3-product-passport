@@ -727,6 +727,7 @@ const UserDashboard = () => {
                           const statusInfo = LISTING_STATUS_LABELS[listing.status] ?? { label: listing.status, color: "bg-gray-100 text-gray-800" };
                           const isReturning = listing.status === "returning";
                           const isListed    = listing.status === "listed";
+                          const isSold      = listing.status === "sold";
                           const isDelistFormOpen = delistingPassportAddr === listing.passport_object_address;
 
                           return (
@@ -751,11 +752,11 @@ const UserDashboard = () => {
 
                               {/* Status progress indicator */}
                               <div className="flex items-center gap-1 text-xs text-gray-500">
-                                {["pending", "verifying", "listed", "request_return", "returning", "returned"].map((s, i) => (
+                                {["pending", "verifying", "listed", "sold", "request_return", "returning", "returned"].map((s, i) => (
                                   <div key={s} className="flex items-center">
                                     <div className={`h-2 w-2 rounded-full ${
                                       listing.status === s ? "bg-blue-500" :
-                                      ["pending", "verifying", "listed", "request_return", "returning", "returned"].indexOf(listing.status) > i
+                                      ["pending", "verifying", "listed", "sold", "request_return", "returning", "returned"].indexOf(listing.status) > i
                                         ? "bg-green-400" : "bg-gray-200"
                                     }`} />
                                     {i < 5 && <div className="h-px w-4 bg-gray-200 mx-0.5" />}
@@ -768,6 +769,7 @@ const UserDashboard = () => {
                                 {listing.status === "pending" && <><Clock className="h-3 w-3 mt-0.5 flex-shrink-0" /> Ship your product to LuxPass. Awaiting receipt.</>}
                                 {listing.status === "verifying" && <><Clock className="h-3 w-3 mt-0.5 flex-shrink-0" /> LuxPass has received your product and is verifying it.</>}
                                 {listing.status === "listed" && <><CheckCircle2 className="h-3 w-3 mt-0.5 flex-shrink-0 text-green-500" /> Your product is live on the marketplace.</>}
+                                {listing.status === "sold" && <><CheckCircle2 className="h-3 w-3 mt-0.5 flex-shrink-0 text-green-500" /> Product has been sold to you.</>}
                                 {listing.status === "request_return" && <><Clock className="h-3 w-3 mt-0.5 flex-shrink-0" /> Delist requested. Awaiting admin approval.</>}
                                 {listing.status === "returning" && <><Truck className="h-3 w-3 mt-0.5 flex-shrink-0" /> Your product is on its way back. Confirm receipt when it arrives.</>}
                                 {listing.status === "returned" && <><CheckCircle2 className="h-3 w-3 mt-0.5 flex-shrink-0 text-green-500" /> Listing closed. Product returned successfully.</>}
@@ -776,7 +778,7 @@ const UserDashboard = () => {
                               {/* Action buttons */}
                               <div className="flex gap-2 flex-wrap">
                                 {/* Set price for escrow marketplace (only when listed and not already in escrow) */}
-                                {isListed && !isDelistFormOpen && escrowPriceAddr !== listing.passport_object_address && (
+                                {(isListed || isSold) && !isDelistFormOpen && escrowPriceAddr !== listing.passport_object_address && (
                                   <Button
                                     size="sm"
                                     className="bg-purple-600 hover:bg-purple-700"
@@ -787,7 +789,7 @@ const UserDashboard = () => {
                                 )}
 
                                 {/* Delist request (only when listed) */}
-                                {isListed && !isDelistFormOpen && escrowPriceAddr !== listing.passport_object_address && (
+                                {(isListed || isSold) && !isDelistFormOpen && escrowPriceAddr !== listing.passport_object_address && (
                                   <Button
                                     size="sm"
                                     variant="outline"

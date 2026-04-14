@@ -21,6 +21,7 @@ import {
   getListedInEscrow,
   updateListingEscrowStatus,
   updateListingRequestStatus,
+  updateListingRequestOwner,
 } from "../repository/listing_repository";
 import {
   createPurchaseOrder,
@@ -160,6 +161,7 @@ export const escrowService = {
     // Update listing status to sold, escrow false
     await updateListingEscrowStatus(passportAddr, false);
     await updateListingRequestStatus(passportAddr, "sold");
+    await updateListingRequestOwner(passportAddr, buyerAddr);
 
     return { success: true as const, message: "Purchase recorded successfully." };
   },
