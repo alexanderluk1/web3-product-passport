@@ -21,6 +21,7 @@ import {
   getListedInEscrow,
   updateListingEscrowStatus,
   updateListingRequestStatus,
+  updateListingRequestOwner,
 } from "../repository/listing_repository";
 import {
   createPurchaseOrder,
@@ -157,9 +158,10 @@ export const escrowService = {
       purchaseTxHash: params.txHash,
     });
 
-    // Update listing status to sold, escrow false
+    // Update listing status to sold, escrow false, and transfer ownership
     await updateListingEscrowStatus(passportAddr, false);
     await updateListingRequestStatus(passportAddr, "sold");
+    await updateListingRequestOwner(passportAddr, buyerAddr);
 
     return { success: true as const, message: "Purchase recorded successfully." };
   },
@@ -267,16 +269,30 @@ export const escrowService = {
   // ─── Marketplace: public browse ─────────────────────────────────
   async getMarketplaceListings(): Promise<MarketplaceListing[]> {
     const listings = await getListedInEscrow();
-    return listings.map((l) => ({
-      passportObjectAddress: l.passport_object_address ?? "",
-      ownerAddress: l.owner_address,
-      priceOctas: l.price_octas ?? "0",
-      inEscrow: l.in_escrow,
-      productName: l.product_name,
-      brand: l.brand,
-      category: l.category,
-      listedAt: l.updated_at?.toISOString() ?? "",
-    }));
+    // Enrich with on-chain metadataUri in parallel
+    const enriched = await Promise.all(
+      listings.map(async (l) => {
+        let metadataUri: string | undefined;
+        try {
+          const passport = await getPassport(aptos, l.passport_object_address ?? "");
+          metadataUri = passport?.metadataUri ?? undefined;
+        } catch {
+          // non-fatal; listing still returned without metadataUri
+        }
+        return {
+          passportObjectAddress: l.passport_object_address ?? "",
+          ownerAddress: l.owner_address,
+          priceOctas: l.price_octas ?? "0",
+          metadataUri,
+          inEscrow: l.in_escrow,
+          productName: l.product_name,
+          brand: l.brand,
+          category: l.category,
+          listedAt: l.updated_at?.toISOString() ?? "",
+        };
+      }),
+    );
+    return enriched;
   },
 
   // ─── Buyer: my purchases ────────────────────────────────────────
