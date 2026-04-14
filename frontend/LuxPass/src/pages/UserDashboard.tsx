@@ -9,9 +9,28 @@ import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Shield, Package, ArrowRightLeft, Search, User, Eye, Calendar,
-  Copy, ExternalLink, Image as ImageIcon, RefreshCw, Loader2, Lock,
-  Store, Truck, RotateCcw, MapPin, CheckCircle2, Clock, AlertCircle,
+  Shield,
+  Package,
+  ArrowRightLeft,
+  Search,
+  User,
+  Eye,
+  Calendar,
+  Building,
+  Copy,
+  ExternalLink,
+  Image as ImageIcon,
+  RefreshCw,
+  Loader2,
+  Lock,
+  Wallet,
+  Store,
+  Truck,
+  RotateCcw,
+  MapPin,
+  CheckCircle2,
+  Clock,
+  AlertCircle,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
@@ -19,6 +38,8 @@ import { useWallet } from "@aptos-labs/wallet-adapter-react";
 import { showSuccess, showError } from "@/utils/toast";
 import { fetchListingsByStatusMap } from "@/utils/listings";
 import { octasToApt, aptToOctas, getAptUsdPrice, formatUsd } from "@/utils/price";
+import { LptPanel } from "@/components/LptPanel";
+import { PassportServicePayment } from "@/components/PassportServicePayment";
 
 const PINATA_GATEWAY_URL = "https://amaranth-passive-chicken-549.mypinata.cloud";
 const BASE_URL = "http://localhost:3001";
@@ -505,6 +526,10 @@ const UserDashboard = () => {
                 <Package className="mr-2 h-4 w-4" />
                 My Passports ({ownedPassports.length})
               </TabsTrigger>
+              <TabsTrigger value="lpt" className="flex items-center">
+                <Wallet className="mr-2 h-4 w-4" />
+                LPT Wallet
+              </TabsTrigger>
               <TabsTrigger value="marketplace" className="flex items-center">
                 <Store className="mr-2 h-4 w-4" />
                 Marketplace ({myListings.length})
@@ -700,6 +725,11 @@ const UserDashboard = () => {
                     </div>
                   </CardContent>
                 </Card>
+
+                {/* LPT Wallet Tab */}
+                <TabsContent value="lpt">
+                  <LptPanel />
+                </TabsContent>
 
                 {/* ── My listings ── */}
                 <Card className="border-0 shadow-xl bg-white/80 backdrop-blur-sm">
@@ -990,6 +1020,7 @@ const UserDashboard = () => {
             </TabsContent>
 
             {/* ─── VERIFY TAB ─────────────────────────────────────────────────────── */}
+            {/* Verify Products Tab */}
             <TabsContent value="verify">
               <Card className="border-0 shadow-xl bg-white/80 backdrop-blur-sm">
                 <CardHeader>

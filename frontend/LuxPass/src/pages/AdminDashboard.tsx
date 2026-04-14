@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import {
   Shield, Settings, Users, UserPlus, UserX, Database, RefreshCw,
-  Store, Package, CheckCircle2, Truck, RotateCcw, Loader2,
+  Store, Package, CheckCircle2, Truck, RotateCcw, Loader2, Coins,
   ClipboardList, MapPin, ChevronDown, ChevronUp, Upload, AlertCircle,
 } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -79,6 +79,7 @@ const formatDate = (ts: string | number) =>
   });
 
 // ─── Component ─────────────────────────────────────────────────────────────────
+import { LptPanel } from "@/components/LptPanel";
 
 const AdminDashboard = () => {
   const { user, accessToken } = useAuth();
@@ -495,6 +496,10 @@ const AdminDashboard = () => {
                 <Users className="mr-2 h-4 w-4" />
                 Issuers
               </TabsTrigger>
+              <TabsTrigger value="lpt" className="flex items-center">
+                <Coins className="mr-2 h-4 w-4" />
+                LPT Management
+              </TabsTrigger>
             </TabsList>
 
             {/* ─── MARKETPLACE TAB ──────────────────────────────────────────────── */}
@@ -824,6 +829,10 @@ const AdminDashboard = () => {
                   </CardContent>
                 </Card>
               </div>
+            </TabsContent>
+
+            <TabsContent value="lpt">
+              <LptPanel mode="admin" />
             </TabsContent>
           </Tabs>
         </div>
