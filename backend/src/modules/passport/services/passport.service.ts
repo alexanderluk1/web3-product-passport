@@ -15,7 +15,6 @@ import {
   RecordTransferResponse,
   PrepareUpdateMetadataRequestBody,
   PrepareSetStatusRequestBody,
-  PreparedSetStatusPayload,
   PrepareSetStatusResponse,
   RecordSetStatusRequestBody,
   RecordSetStatusResponse,
@@ -23,7 +22,6 @@ import {
   PrepareUpdateMetadataResponse,
   RecordUpdateMetadataRequestBody,
   RecordUpdateMetadataResponse,
-  PreparedListPassportPayload,
   PrepareListPassportRequestBody,
   PrepareListPassportResponse,
   RecordListPassportRequestBody,
@@ -80,6 +78,9 @@ import {
   PASSPORT_MINTLIST_EV,
 } from "../../../chains/luxpass/constants";
 import { initRegistry as writeInitRegistry } from "../../../chains/luxpass/writers/initRegistry";
+import { buildSetPassportStatusPayload } from "../../../chains/luxpass/writers/setPassportStatus";
+import { buildListPassportPayload } from "../../../chains/luxpass/writers/listPassport";
+import { buildDelistPassportPayload } from "../../../chains/luxpass/writers/delistPassport";
 import {
   getIssuerProductsFromStore,
   saveIssuerProductsToStore,
@@ -282,21 +283,6 @@ function buildTransferPayload(params: {
   };
 }
 
-export function buildSetStatusPayload(params: {
-  passportObjectAddress: string;
-  registryAddress: string;
-  newStatus: number;
-}): PreparedSetStatusPayload {
-  return {
-    function: PASSPORT_SET_STATUS_FN,
-    functionArguments: [
-      params.passportObjectAddress,
-      params.registryAddress,
-      params.newStatus,
-    ],
-  };
-}
-
 export function buildUpdateMetadataPayload(params: {
   passportObjectAddress: string;
   registryAddress: string;
@@ -310,32 +296,6 @@ export function buildUpdateMetadataPayload(params: {
       params.registryAddress,
       params.metadataIpfsUri,
       params.metadataBytes,
-    ],
-  };
-}
-
-export function buildPassportListPayload(params: {
-  passportObjectAddress: string;
-  registryAddress: string;
-}): PreparedListPassportPayload {
-  return {
-    function: PASSPORT_LIST_FN,
-    functionArguments: [
-      params.passportObjectAddress,
-      params.registryAddress,
-    ],
-  };
-}
-
-export function buildPassportDeListPayload(params: {
-  passportObjectAddress: string;
-  registryAddress: string;
-}): PreparedListPassportPayload {
-  return {
-    function: PASSPORT_DELIST_FN,
-    functionArguments: [
-      params.passportObjectAddress,
-      params.registryAddress,
     ],
   };
 }
@@ -932,7 +892,7 @@ export const passportListingService = {
     }
 
     const normalizedRegistry = normalizeAddress(REGISTRY_ADDRESS);
-    const payload = buildSetStatusPayload({
+    const payload = buildSetPassportStatusPayload({
       passportObjectAddress: normalizedPassportAddr,
       registryAddress: normalizedRegistry,
       newStatus: body.newStatus,
@@ -1192,7 +1152,7 @@ export const passportListingService = {
     }
 
     const normalizedRegistry = normalizeAddress(REGISTRY_ADDRESS);
-    const payload = buildPassportListPayload({
+    const payload = buildListPassportPayload({
       passportObjectAddress: normalizedPassportAddr,
       registryAddress: normalizedRegistry,
     });
@@ -1605,7 +1565,7 @@ export const passportListingService = {
       return { success: false, error: "You are not the owner of this passport." };
     }
 
-    const payload = buildPassportDeListPayload({
+    const payload = buildDelistPassportPayload({
       passportObjectAddress: normalizedPassportAddr,
       registryAddress: registryAddress,
     });
@@ -1712,7 +1672,7 @@ export const passportListingService = {
           error: "Owner mismatch:"+listed_owner+", "+listing.owner_address+", "+existing.requester_address,
         };
       }
-      const payload = buildSetStatusPayload(
+      const payload = buildSetPassportStatusPayload(
         {
           passportObjectAddress: normalizedPassportAddr,
           registryAddress: normalizeAddress(REGISTRY_ADDRESS),
