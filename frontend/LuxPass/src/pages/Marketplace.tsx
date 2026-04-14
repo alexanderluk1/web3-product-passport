@@ -42,9 +42,12 @@ const Marketplace = () => {
       const raw = await fetchMarketplaceListings();
       const enriched: EnrichedListing[] = raw.map((l) => ({ ...l, metadataLoading: true }));
       setListings(enriched);
-      // Enrich metadata in parallel
+      // Enrich metadata in parallel — use metadataUri from listing if available
       enriched.forEach((listing, i) => {
-        fetchMetadata(listing.passportObjectAddress).then((meta) => {
+        const resolve = listing.metadataUri
+          ? fetchMetadataFromUri(listing.metadataUri)
+          : fetchMetadata(listing.passportObjectAddress);
+        resolve.then((meta) => {
           setListings((prev) =>
             prev.map((l, j) =>
               j === i ? { ...l, metadata: meta ?? undefined, metadataLoading: false } : l,
@@ -59,12 +62,23 @@ const Marketplace = () => {
     }
   };
 
+  const fetchMetadataFromUri = async (metadataUri: string) => {
+    try {
+      const metaRes = await fetch(convertIPFSToHTTP(metadataUri));
+      if (!metaRes.ok) return null;
+      return await metaRes.json();
+    } catch {
+      return null;
+    }
+  };
+
   const fetchMetadata = async (passportAddr: string) => {
     try {
-      const res = await fetch(`http://localhost:3001/api/passports/by-product/${passportAddr}`);
+      // Use the passport object address endpoint (not by-product which expects a serial/product ID)
+      const res = await fetch(`http://localhost:3001/api/passports/${passportAddr}`);
       if (!res.ok) return null;
       const data = await res.json();
-      const metadataUri = data.metadataUri;
+      const metadataUri = data.data?.metadataUri;
       if (!metadataUri) return null;
       const metaRes = await fetch(convertIPFSToHTTP(metadataUri));
       if (!metaRes.ok) return null;

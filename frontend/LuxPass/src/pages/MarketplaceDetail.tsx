@@ -80,12 +80,13 @@ const MarketplaceDetail = () => {
 
   const fetchPassportMetadata = async (addr: string): Promise<ProductMetadata | null> => {
     try {
-      // Get passport data which has metadataUri
-      const res = await fetch(`${BASE_URL}/api/passports/by-product/${addr}`);
+      // Use the passport object address endpoint (not by-product which expects a serial/product ID)
+      const res = await fetch(`${BASE_URL}/api/passports/${addr}`);
       if (!res.ok) return null;
       const data = await res.json();
-      if (!data.metadataUri) return null;
-      const metaRes = await fetch(convertIPFSToHTTP(data.metadataUri));
+      const metadataUri = data.data?.metadataUri;
+      if (!metadataUri) return null;
+      const metaRes = await fetch(convertIPFSToHTTP(metadataUri));
       if (!metaRes.ok) return null;
       return metaRes.json();
     } catch {

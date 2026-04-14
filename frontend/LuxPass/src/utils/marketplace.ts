@@ -4,6 +4,7 @@ export interface MarketplaceListing {
   passportObjectAddress: string;
   ownerAddress: string;
   priceOctas: string;
+  metadataUri?: string;
   inEscrow: boolean;
   productName?: string;
   brand?: string;
