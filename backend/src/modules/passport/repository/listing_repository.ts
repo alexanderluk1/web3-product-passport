@@ -6,7 +6,7 @@ import { createHash } from "crypto";
 // Types
 // ----------------------
 
-export type ListingRequestStatus = "pending" | "verifying"  | "listed" | "request_return" | "returning" | "returned";
+export type ListingRequestStatus = "pending" | "verifying"  | "listed" | "request_return" | "returning" | "returned" | "sold";
 
 export type ListingRequest = {
   id: string;
@@ -14,6 +14,15 @@ export type ListingRequest = {
   owner_address: string;
   status: ListingRequestStatus;
   has_passport: boolean;
+  price_octas?: string;
+  escrow_tx_hash?: string;
+  in_escrow: boolean;
+  product_name?: string;
+  brand?: string;
+  category?: string;
+  description?: string;
+  materials?: string;
+  country_of_origin?: string;
   created_at: Date;
   updated_at: Date;
 };
@@ -81,6 +90,15 @@ function mapListingRow(row: Record<string, unknown> | undefined): ListingRequest
     owner_address: row.owner_address as string,
     status: row.status as ListingRequestStatus,
     has_passport: row.has_passport as boolean,
+    price_octas: row.price_octas ? String(row.price_octas) : undefined,
+    escrow_tx_hash: row.escrow_tx_hash as string | undefined,
+    in_escrow: (row.in_escrow as boolean) ?? false,
+    product_name: row.product_name as string | undefined,
+    brand: row.brand as string | undefined,
+    category: row.category as string | undefined,
+    description: row.description as string | undefined,
+    materials: row.materials as string | undefined,
+    country_of_origin: row.country_of_origin as string | undefined,
     created_at: new Date(row.created_at as string),
     updated_at: new Date(row.updated_at as string),
   };
@@ -402,4 +420,56 @@ export async function updateDelistRequestAddress(
     .returning("*");
 
   return mapDelistRow(row);
+}
+
+// ----------------------
+// Escrow helpers
+// ----------------------
+
+export async function updateListingEscrowStatus(
+  passportObjectAddress: string,
+  inEscrow: boolean,
+  priceOctas?: string,
+  escrowTxHash?: string,
+): Promise<ListingRequest | undefined> {
+  const addr = passportObjectAddress.trim().toLowerCase();
+  const updates: Record<string, unknown> = {
+    in_escrow: inEscrow,
+    updated_at: db.fn.now(),
+  };
+  if (priceOctas !== undefined) updates.price_octas = priceOctas;
+  if (escrowTxHash !== undefined) updates.escrow_tx_hash = escrowTxHash;
+
+  const [row] = await db("listing_requests")
+    .where("passport_object_address", addr)
+    .update(updates)
+    .returning("*");
+  return mapListingRow(row);
+}
+
+export async function getListedInEscrow(): Promise<ListingRequest[]> {
+  const rows = await db("listing_requests")
+    .where({ status: "listed", in_escrow: true })
+    .whereNotNull("price_octas")
+    .orderBy("updated_at", "desc");
+  return rows.map(mapListingRow).filter(Boolean) as ListingRequest[];
+}
+
+export async function updateListingProductDetails(
+  passportObjectAddress: string,
+  details: {
+    product_name?: string;
+    brand?: string;
+    category?: string;
+    description?: string;
+    materials?: string;
+    country_of_origin?: string;
+  },
+): Promise<ListingRequest | undefined> {
+  const addr = passportObjectAddress.trim().toLowerCase();
+  const [row] = await db("listing_requests")
+    .where("passport_object_address", addr)
+    .update({ ...details, updated_at: db.fn.now() })
+    .returning("*");
+  return mapListingRow(row);
 }

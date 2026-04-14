@@ -4,6 +4,7 @@ import authRouter from "./modules/auth/routes/auth.routes";
 import adminRegistryRouter from "./modules/admin/routes/adminRegistry.routes";
 import issuerRegistryRoutes from "./modules/issuerRegistry/routes/issuerRegistry.routes"
 import { lptRouter } from "./modules/luxpasstoken/routes/lpt.routes";
+import { escrowRouter } from "./modules/passport/routes/escrow.routes";
 
 /**
  * Create and configure the Express app.
@@ -119,6 +120,7 @@ export function createApp() {
   app.use("/auth", authRouter);
   app.use("/admin", adminRegistryRouter);
   app.use("/admin", issuerRegistryRoutes);
+  app.use("/api/escrow", escrowRouter);
 
   // ---- 404 ----
   app.use((_req, res) => {
